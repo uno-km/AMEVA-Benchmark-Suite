@@ -1,0 +1,6 @@
+﻿PySide6
+docker
+requests
+pandas
+pyqtgraph
+openai

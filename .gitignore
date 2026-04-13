@@ -1,0 +1,31 @@
+# ==========================================
+# AMEVA-Bench .gitignore
+# ==========================================
+
+# 1. 파이썬 가상환경 및 캐시 (절대 커밋 금지)
+venv/
+env/
+*env/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 2. 초거대 AI 모델 파일 (Github 용량 폭발 방지)
+models/
+*.gguf
+*.bin
+*.safetensors
+
+# 3. 벤치마크 결과 리포트 및 로그 (동적 생성 파일)
+*.csv
+*.log
+
+# 4. 환경 변수 및 보안 키 (API Key 유출 방지)
+.env
+secret.key
+
+# 5. OS 및 IDE 찌꺼기
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

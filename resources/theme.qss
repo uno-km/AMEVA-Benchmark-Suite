@@ -1,0 +1,10 @@
+﻿QMainWindow { background-color: #0b0f19; }
+QLabel { color: #00ffcc; font-family: 'Consolas', 'Malgun Gothic'; }
+QGroupBox { border: 1px solid #1f2937; margin-top: 20px; color: #ffffff; font-weight: bold; background-color: #111827; border-radius: 8px;}
+QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; color: #ff0055; }
+QPushButton { background-color: #1d4ed8; border: none; color: #ffffff; padding: 10px; border-radius: 6px; font-weight: bold; }
+QPushButton:hover { background-color: #2563eb; }
+QPushButton:disabled { background-color: #374151; color: #9ca3af; }
+QTextEdit, QLineEdit { background-color: #000000; color: #10b981; border: 1px solid #374151; font-family: Consolas; font-size: 13px; padding: 5px; }
+QComboBox, QSpinBox, QDoubleSpinBox { background-color: #1f2937; color: white; border: 1px solid #4b5563; padding: 5px; border-radius: 4px;}
+QProgressBar { border: 1px solid #444; text-align: center; color: white; background-color: #111; border-radius: 4px;}
