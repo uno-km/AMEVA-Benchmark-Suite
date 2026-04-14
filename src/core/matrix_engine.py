@@ -3,11 +3,11 @@ import time
 import os
 from typing import Optional, Callable, Dict, Tuple
 
+
 class MatrixEngine:
-    """[V5.5] 매트릭스 엔진 - 도커 오케스트레이션을 위한 순수 백엔드 모듈입니다."""
-    
+    """[V5.5] 매트릭스 엔진 - Docker 오케스트레이션 순수 백엔드."""
+
     def __init__(self, container_name: str = "edgematrix_v5_5_arena"):
-        self.client = docker.from_env()
         self.container_name = container_name
         self.container = None
         self.log_callback: Optional[Callable[[str], None]] = None
@@ -20,77 +20,127 @@ class MatrixEngine:
             self.log_callback(msg)
 
     def cleanup_old_arena(self):
-        """기존에 남아있는 아레나(컨테이너)를 정리합니다."""
+        """기존 컨테이너를 정리합니다."""
         try:
-            self.client.containers.get(self.container_name).remove(force=True)
-        except:
-            pass
+            client = docker.from_env()
+            client.containers.get(self.container_name).remove(force=True)
+            self._log("✓ 이전 컨테이너 제거 완료")
+        except docker.errors.NotFound:
+            self._log("· 기존 컨테이너 없음 (클린 스테이트)")
+        except Exception as e:
+            self._log(f"[WARN] 컨테이너 정리 중 오류: {e}")
 
     def boot_matrix(self, config: Dict) -> Tuple[bool, str]:
-        """매트릭스(도커 컨테이너)를 부팅합니다."""
-        self.cleanup_old_arena()
-        
+        """매트릭스(Docker 컨테이너)를 부팅합니다. 각 단계를 상세 로깅합니다."""
         cpu_cores = float(config.get("cpu_cores", 2.0))
         ram_mb = int(config.get("ram_mb", 2048))
         engine_type = config.get("engine", "OLM")
         gpu_layers = int(config.get("gpu_layers", 0))
 
-        models_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "models"))
-        os.makedirs(models_dir, exist_ok=True)
-        volumes = {models_dir: {'bind': '/models', 'mode': 'rw'}}
-
-        device_requests = []
-        if gpu_layers > 0:
-            try:
-                device_requests = [docker.types.DeviceRequest(count=-1, capabilities=[['gpu']])]
-            except:
-                self._log("[경고] GPU 요청에 실패했습니다. CPU 모드로 전환합니다.")
-
         try:
+            self._log("Docker 클라이언트 초기화 중...")
+            client = docker.from_env()
+            self._log("✓ Docker 데몬 연결 성공")
+
+            # Cleanup
+            self._log("이전 아레나 인스턴스 정리 중...")
+            self.cleanup_old_arena()
+
+            # Volumes
+            models_dir = os.path.abspath(
+                os.path.join(os.path.dirname(__file__), "..", "..", "models")
+            )
+            os.makedirs(models_dir, exist_ok=True)
+            volumes = {models_dir: {'bind': '/models', 'mode': 'rw'}}
+            self._log(f"· 볼륨 마운트 준비: {models_dir} → /models")
+
+            # GPU
+            device_requests = []
+            if gpu_layers > 0:
+                try:
+                    device_requests = [docker.types.DeviceRequest(count=-1, capabilities=[['gpu']])]
+                    self._log(f"✓ GPU 오프로드 레이어 {gpu_layers}개 등록")
+                except Exception as ge:
+                    self._log(f"[WARN] GPU 요청 실패 → CPU 전용 모드: {ge}")
+
+            # Engine
             if engine_type == "OLM":
                 image = "ollama/ollama"
                 cmd = None
                 ports = {'11434/tcp': 11434}
+                self._log("· 런타임: OLLAMA (Managed HTTP API, port 11434)")
             else:
                 image = "ghcr.io/ggml-org/llama.cpp:server"
-                # 모델 파일이 명시되지 않은 경우 발견 로직 또는 기본값 사용
-                cmd = ["-m", "/models/qwen2.5-0.5b.gguf", "-c", "2048", "--host", "0.0.0.0", "--port", "8080"]
+                cmd = ["-m", "/models/qwen2.5-0.5b.gguf", "-c", "2048",
+                       "--host", "0.0.0.0", "--port", "8080"]
                 ports = {'8080/tcp': 8080}
+                self._log("· 런타임: LLAMA.CPP Server (GGUF, port 8080)")
 
-            self._log(f"[시스템] 커널 마운트 중: {image}")
-            self.container = self.client.containers.run(
-                image, 
-                command=cmd, 
-                name=self.container_name, 
+            # Image check/pull
+            self._log(f"이미지 인스펙션 중: {image}")
+            try:
+                client.images.get(image)
+                self._log(f"✓ 로컬 이미지 캐시 히트")
+            except docker.errors.ImageNotFound:
+                self._log(f"↓ 이미지 미발견 → Docker Hub 풀링 시작...")
+                self._log("  (초기 다운로드는 이미지 크기에 따라 수 분 소요)")
+                for evt in client.api.pull(image, stream=True, decode=True):
+                    status = evt.get('status', '')
+                    prog = evt.get('progress', '')
+                    if status:
+                        self._log(f"  ↓ {status} {prog}")
+                self._log("✓ 이미지 다운로드 완료")
+
+            # Launch
+            self._log("컨테이너 생성 및 부팅 중...")
+            self._log(f"  CPU 쿼터 : {cpu_cores} Core(s)")
+            self._log(f"  RAM 상한 : {ram_mb} MB")
+            self.container = client.containers.run(
+                image,
+                command=cmd,
+                name=self.container_name,
                 detach=True,
-                nano_cpus=int(cpu_cores * 1e9), 
+                nano_cpus=int(cpu_cores * 1e9),
                 mem_limit=f"{ram_mb}m",
-                ports=ports, 
-                volumes=volumes, 
+                ports=ports,
+                volumes=volumes,
                 device_requests=device_requests
             )
-            
-            self._log("[시스템] 아레나 생성 완료. 메모리 초기화 중...")
-            time.sleep(5) # 부팅을 위한 대기 시간
-            
-            return True, f"[{engine_type}] 매트릭스 온라인 (CPU:{cpu_cores}, RAM:{ram_mb}MB)"
+            self._log(f"✓ 컨테이너 시작됨 [ID: {self.container.short_id}]")
+
+            # Stream container startup logs (up to 10s)
+            self._log("─── 컨테이너 부팅 로그 스트림 ───")
+            deadline = time.time() + 10
+            try:
+                for raw in self.container.logs(stream=True, follow=True):
+                    line = raw.decode('utf-8', errors='replace').strip()
+                    if line:
+                        self._log(f"[CTR] {line}")
+                    if time.time() > deadline:
+                        self._log("─── (스트림 10초 상한 도달, 백그라운드 계속 실행) ───")
+                        break
+            except Exception as le:
+                self._log(f"[WARN] 로그 스트리밍 중단: {le}")
+
+            self._log(f"✓ 커널 온라인. 명령 대기 상태.")
+            return True, f"[{engine_type}] ONLINE  CPU:{cpu_cores}c  RAM:{ram_mb}MB"
+
         except Exception as e:
+            self._log(f"[FATAL] 부팅 실패: {e}")
             return False, str(e)
 
     def run_llama_bench(self, model_name: str, options: dict) -> dict:
-        """지정된 하드웨어 제약 조건 하에서 llama-bench를 실행합니다."""
-        if not self.container: return {}
+        """지정 모델로 llama-bench를 실행합니다."""
+        if not self.container:
+            return {}
         try:
-            # 모델 명칭 매핑
             model_file = model_name.replace(":", "-")
-            if not model_file.endswith(".gguf"): model_file += ".gguf"
-            
+            if not model_file.endswith(".gguf"):
+                model_file += ".gguf"
             threads = options.get('threads', 4)
             n_ctx = options.get('n_ctx', 2048)
-            
             cmd = f"llama-bench -m /models/{model_file} -t {threads} -c {n_ctx} --output-json"
             self._log(f"[스트레스] 실행 중: {cmd}")
-            
             exit_code, output = self.container.exec_run(cmd)
             if exit_code == 0:
                 import json
@@ -100,9 +150,9 @@ class MatrixEngine:
         return {}
 
     def inject_chaos(self):
-        """카오스 몽키(부하 테스트)를 주입합니다."""
+        """카오스 몽키 부하 주입."""
         if self.container:
-            cmd = "sh -c 'end=date +%s; while [ date +%s -lt ]; do :; done'"
+            cmd = "sh -c 'end=$(($(date +%s)+10)); while [ $(date +%s) -lt $end ]; do :; done'"
             self.container.exec_run(cmd, detach=True)
             return True
         return False
@@ -112,8 +162,11 @@ class MatrixEngine:
         if self.container:
             try:
                 self.container.stop(timeout=5)
-            except:
+            except Exception:
                 pass
-            self.cleanup_old_arena()
+            try:
+                self.container.remove(force=True)
+            except Exception:
+                pass
             self.container = None
-            self._log("[시스템] 커널 연결 해제. 자원 반납 완료.")
+            self._log("✓ 커널 연결 해제. 자원 반납 완료.")
