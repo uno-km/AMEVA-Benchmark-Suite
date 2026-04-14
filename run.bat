@@ -1,46 +1,93 @@
-@echo off
+﻿@echo off
+setlocal enabledelayedexpansion
+:: [중요] UTF-8 환경으로 강제 전환
 chcp 65001 >nul
-title AMEVA-Bench All-in-One Launcher
+title AMEVA-Bench Ultimate Launcher & Reporter
+
+set "REPORT_FILE=AMEVA_Setup_Report.log"
+set "DOCKER_STATUS=Unknown"
+set "DOCKER_VER=None"
+set "DOCKER_PATH=Not Found"
+set "MODEL_QWEN=Missing"
+set "MODEL_LLAMA=Missing"
+set "CPU_ACCEL=Checking..."
 
 echo ==========================================
-echo     ?? AMEVA-Bench: Singularity System Ignition
+echo      AMEVA-Bench: Singularity Ignition
 echo ==========================================
 echo.
 
-:: [1] Check Docker installation and install automatically if missing
-echo [1/4] System Environment Check: Docker
+:: [1] Docker Check
+echo [1/4] Checking System: Docker...
 docker --version >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [Warning] Docker not detected! Starting automatic installation...
-    echo (Administrator privileges may be required, and a PC reboot is required after installation.)
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "Write-Host '?? Downloading Docker Desktop...' -ForegroundColor Cyan; Invoke-WebRequest -Uri 'https://desktop.docker.com/win/main/amd64/Docker%%20Desktop%%20Installer.exe' -OutFile \"$env:TEMP\DockerInstaller.exe\"; Write-Host '?? Running silent installation (This may take a few minutes)...' -ForegroundColor Yellow; Start-Process -Wait -FilePath \"$env:TEMP\DockerInstaller.exe\" -ArgumentList 'install', '--quiet', '--accept-license', '--backend=wsl-2'; Remove-Item \"$env:TEMP\DockerInstaller.exe\"; Write-Host '[Success] Installation complete! Please reboot your PC and run this script again.' -ForegroundColor Green"
-    pause
-    exit
+if %errorlevel% equ 0 (
+    set "DOCKER_STATUS=Already Installed"
 ) else (
-    echo [Success] Docker engine detected.
+    set "PATH=%PATH%;C:\Program Files\Docker\Docker\resources\bin"
+    docker --version >nul 2>&1
+    if !errorlevel! equ 0 (
+        set "DOCKER_STATUS=Found via Path Injection"
+    ) else (
+        set "DOCKER_STATUS=Newly Installed"
+        echo [Info] Starting Docker Installation...
+        powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri 'https://desktop.docker.com/win/main/amd64/Docker%%20Desktop%%20Installer.exe' -OutFile \"$env:TEMP\DockerInstaller.exe\"; Start-Process -Wait -FilePath \"$env:TEMP\DockerInstaller.exe\" -ArgumentList 'install', '--quiet', '--accept-license', '--backend=wsl-2'; Remove-Item \"$env:TEMP\DockerInstaller.exe\""
+        set "DOCKER_VER=Latest (Reboot Required)"
+    )
 )
 
-:: [2] Download HuggingFace models
-echo.
-echo [2/4] Asset Check: HuggingFace Model Data
-if not exist "models" mkdir models
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$ModelDir = '.\models'; $files = @{ 'qwen2.5-0.5b.gguf'='https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q8_0.gguf'; 'llama3.2-1b.gguf'='https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf' }; foreach($f in $files.Keys) { if(-not (Test-Path \"$ModelDir\$f\")) { Write-Host \"?? Downloading $f...\" -ForegroundColor Cyan; curl.exe -L $files[$f] -o \"$ModelDir\$f\" } else { Write-Host \"[Success] $f already exists.\" -ForegroundColor Green } }"
+if "!DOCKER_VER!"=="None" (
+    for /f "tokens=*" %%i in ('docker --version') do set "DOCKER_VER=%%i"
+    for /f "tokens=*" %%i in ('where docker') do set "DOCKER_PATH=%%i"
+)
 
-:: [3] Python Virtual Environment Setup
+:: [2] Assets & Firewall
 echo.
-echo [3/4] Software Environment Setup: Python venv
+echo [2/4] Checking Assets: Models...
+if not exist "models" mkdir models
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$check = Test-NetConnection huggingface.co -Port 443 -InformationLevel Quiet; if (-not $check) { Write-Host '![Notice] Firewall detected. Auto-download might fail.' -ForegroundColor Yellow }"
+
+powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; $ModelDir = '.\models'; $files = @{ 'qwen2.5-0.5b.gguf'='https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q8_0.gguf'; 'llama3.2-1b.gguf'='https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf' }; foreach($f in $files.Keys) { if(-not (Test-Path \"$ModelDir\$f\")) { curl.exe -k -L $files[$f] -o \"$ModelDir\$f\" } }"
+
+if exist "models\qwen2.5-0.5b.gguf" set "MODEL_QWEN=Success"
+if exist "models\llama3.2-1b.gguf" set "MODEL_LLAMA=Success"
+
+:: [3] CPU Accel Check
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$feat = (Get-CimInstance Win32_Processor).Caption; if ($feat -match 'AVX2') { $accel='AVX2 Optimized' } else { $accel='Standard' }; Set-Content -Path 'cpu_tmp.txt' -Value $accel"
+set /p CPU_ACCEL=<cpu_tmp.txt
+del cpu_tmp.txt
+
+:: [4] Python & Report
+echo.
+echo [3/4] Software Environment: Python venv
 if not exist "venv\Scripts\activate.bat" (
-    echo Creating virtual environment...
     python -m venv venv
 )
 call venv\Scripts\activate
-echo Installing dependency packages...
-pip install -r requirements.txt
+pip install -r requirements.txt >nul 2>&1
 
-:: [4] Architecture Ignition
+echo ========================================== > %REPORT_FILE%
+echo        AMEVA SETUP DEPLOYMENT REPORT       >> %REPORT_FILE%
+echo        Timestamp: %date% %time%           >> %REPORT_FILE%
+echo ========================================== >> %REPORT_FILE%
+echo [SYSTEM INFO] >> %REPORT_FILE%
+echo Docker Status: %DOCKER_STATUS% >> %REPORT_FILE%
+echo Docker Version: %DOCKER_VER% >> %REPORT_FILE%
+echo Docker Path: %DOCKER_PATH% >> %REPORT_FILE%
+echo CPU Acceleration: %CPU_ACCEL% >> %REPORT_FILE%
+echo. >> %REPORT_FILE%
+echo [MODELS] >> %REPORT_FILE%
+echo Qwen-2.5-0.5B: %MODEL_QWEN% >> %REPORT_FILE%
+echo Llama-3.2-1B: %MODEL_LLAMA% >> %REPORT_FILE%
+echo. >> %REPORT_FILE%
+echo [LIBRARIES] >> %REPORT_FILE%
+pip list >> %REPORT_FILE%
+echo ========================================== >> %REPORT_FILE%
+
+type %REPORT_FILE%
 echo.
-echo [4/4] Igniting AMEVA Architecture!
+echo [4/4] Igniting AMEVA Architecture...
 set PYTHONPATH=%~dp0src
+set PATH=%~dp0venv\Scripts;%PATH%
 python src/main.py
 
 deactivate
