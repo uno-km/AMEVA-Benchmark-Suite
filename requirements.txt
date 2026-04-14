@@ -13,3 +13,7 @@ pandas>=2.2.0
 
 # --- AI & LLM Interface ---
 openai>=1.10.0
+
+psutil 
+
+GPUtil
