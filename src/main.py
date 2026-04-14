@@ -1,6 +1,12 @@
 import sys
 import os
 import csv
+
+# Ensure local source packages load before any top-level workspace folders like /models
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+
 from PySide6.QtWidgets import QApplication, QMainWindow, QStackedWidget, QMessageBox
 from PySide6.QtCore import Qt
 
