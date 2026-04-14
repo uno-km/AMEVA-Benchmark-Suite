@@ -86,9 +86,17 @@ echo ========================================== >> %REPORT_FILE%
 type %REPORT_FILE%
 echo.
 echo [4/4] Igniting AMEVA Architecture...
-set PYTHONPATH=%~dp0src
-set PATH=%~dp0venv\Scripts;%PATH%
-python src/main.py
+:: 런처 하단 Ignition 섹션
+set "VENV_BASE=%~dp0venv"
+set "PYSIDE_PATH=%VENV_BASE%\Lib\site-packages\PySide6"
+:: 시스템 경로보다 가상환경 경로를 최우선으로!
+set "PATH=%VENV_BASE%\Scripts;%PYSIDE_PATH%;%PYSIDE_PATH%\plugins;%PATH%"
+set "QT_QPA_PLATFORM_PLUGIN_PATH=%PYSIDE_PATH%\plugins\platforms"
+
+python src\main.py
+
+
+
 
 deactivate
 pause

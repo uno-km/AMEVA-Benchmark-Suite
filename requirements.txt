@@ -1,6 +1,15 @@
-﻿PySide6
-docker
-requests
-pandas
-pyqtgraph
-openai
+﻿# --- GUI Framework (Python 3.12+ 대응) ---
+PySide6>=6.7.0
+
+# --- Visualization (Qt 하위 호환성 유지) ---
+pyqtgraph>=0.13.3
+
+# --- Docker & Network ---
+docker>=7.0.0
+requests>=2.31.0
+
+# --- Data Analysis ---
+pandas>=2.2.0
+
+# --- AI & LLM Interface ---
+openai>=1.10.0
