@@ -1,4 +1,6 @@
-﻿import pyqtgraph as pg
+﻿import os
+
+import pyqtgraph as pg
 from PySide6.QtWidgets import (QApplication, QMessageBox, QWidget, QVBoxLayout, QHBoxLayout, 
                                QLabel, QPushButton, QTextEdit, QComboBox, QGroupBox, 
                                QLineEdit, QProgressBar, QTabWidget)
@@ -38,6 +40,15 @@ class DashUI(QWidget):
         self.api_key_input.setPlaceholderText("LLM Judge용 OpenAI API Key (선택)")
         self.api_key_input.setEchoMode(QLineEdit.Password)
         ctrl_layout.addWidget(self.api_key_input)
+
+        # =======================================================
+        # ✅ [신규] 하네스 관리 화면으로 넘어가는 스위치 장착!
+        # =======================================================
+        self.btn_harness_mgr = QPushButton("⚙️ 하네스 관리")
+        self.btn_harness_mgr.setStyleSheet("background-color: #3b82f6; color: white; font-weight: bold;") # 파란색 스타일
+        self.btn_harness_mgr.clicked.connect(self.ctrl.show_harness_manager)
+        ctrl_layout.addWidget(self.btn_harness_mgr)
+        # =======================================================
 
         self.btn_run = QPushButton(" 자동화 테스트 런닝")
         self.btn_run.clicked.connect(self._run)
@@ -163,8 +174,33 @@ class DashUI(QWidget):
         self.console.clear()
         self.lbl_blackout.setText("")
         key = self.api_key_input.text().strip()
-        self.ctrl.start_benchmark(self.model_combo.currentText(), None, key)
+        
+        # ✅ [스파게티 탈출] 1. CSV에서 하네스 데이터를 직접 파싱합니다!
+        dataset = self._load_harness_data()
+        
+        if not dataset:
+            self.log(" [에러] 테스트할 하네스 데이터가 없습니다! 매니저 화면에서 태스크를 추가해주세요.")
+            self.btn_run.setEnabled(True)
+            return
 
+        # ✅ 2. 'None' 대신 우리가 방금 읽어온 'dataset' 리스트를 당당하게 던져줍니다!
+        self.ctrl.start_benchmark(self.model_combo.currentText(), dataset, key)
+        
+    def _load_harness_data(self):
+        fname = "harness_v4.csv"
+        dataset = []
+        if os.path.exists(fname):
+            try:
+                with open(fname, 'r', encoding='utf-8-sig') as f:
+                    reader = csv.DictReader(f)
+                    for row in reader:
+                        dataset.append(row)
+                self.log(f" [SYSTEM] {fname} 파일에서 {len(dataset)}개의 태스크를 성공적으로 로드했습니다.")
+            except Exception as e:
+                self.log(f" [에러] 하네스 로드 실패: {e}")
+        else:
+            self.log(f" [경고] {fname} 파일이 존재하지 않습니다.")
+        return dataset
     def log(self, text):
         """1번 탭: 벤치마크용 로그"""
         self.console.append(text)

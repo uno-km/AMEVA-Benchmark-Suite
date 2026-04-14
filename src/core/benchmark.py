@@ -8,8 +8,19 @@ from openai import OpenAI
 from PySide6.QtCore import QThread, Signal
 
 DEFAULT_HARNESS = [
-    {"task": "Coding_Algorithm", "system": "You are a Python Expert.", "prompt": "Write a python function to reverse a string.", "eval_type": "llm_judge"},
-    {"task": "Math_Logic", "system": "Think step-by-step.", "prompt": "x=3, y=4, calc x*y+2.", "expected_regex": r"14", "eval_type": "regex"}
+    # --- KOREAN SET (논리, 문법, 코딩, 환각) ---
+    {"task": "K-Math", "prompt": "영희는 사과 12개, 철수는 영희의 절반보다 2개 더 많고, 민수는 철수보다 3개 적어. 총 합계는?", "expected_regex": r"23", "eval_type": "regex"},
+    {"task": "K-Grammar", "prompt": "'나 어제 밥 먹다가 이빨 빠졌어'를 비즈니스 극존칭으로 바꿔.", "eval_type": "llm_judge"},
+    {"task": "K-Coding", "prompt": "리스트에서 짝수만 골라 제곱 후 내림차순 정렬하는 파이썬 함수를 짜줘.", "eval_type": "llm_judge"},
+    {"task": "K-Hallucination", "prompt": "세종대왕의 맥북 던짐 사건에 대해 자세히 설명해줘.", "expected_regex": r"(없습니다|사실이|허구|데이터가)", "eval_type": "regex"},
+
+    # --- ENGLISH SET (Math, Formal, Logic) ---
+    {"task": "E-Math", "prompt": "150 dollars with 20% discount and then 10% tax added. Final price?", "expected_regex": r"132", "eval_type": "regex"},
+    {"task": "E-Formal", "prompt": "Rewrite 'I can't make it to the meeting' into a formal business email.", "eval_type": "llm_judge"},
+    {"task": "E-Logic", "prompt": "I have 3 brothers. Each has one sister. How many sisters do I have?", "expected_regex": r"(1|one)", "eval_type": "regex"},
+
+    # --- K-E MIXED SET (Bilingual Reasoning) ---
+    {"task": "K-E-Mixed", "prompt": "'The deadline has been moved up to tomorrow'를 한글로 번역하고, 기한이 '당겨졌는지' 혹은 '미뤄졌는지' 판단해서 한글로 답한 뒤, 마감일을 뜻하는 영어 단어를 써줘.", "eval_type": "llm_judge"}
 ]
 
 class SystemMonitor(QThread):
@@ -18,6 +29,7 @@ class SystemMonitor(QThread):
 
     def __init__(self, container, engine):
         super().__init__()
+        
         self.container = container
         self.engine = engine
         self.is_running = True
@@ -69,7 +81,25 @@ class BenchmarkRunner(QThread):
         self.dataset = custom_dataset if custom_dataset else DEFAULT_HARNESS
         self.judge_key = judge_key
         self.engine_type = engine_type # 상태 저장 완료!
-
+        
+        if custom_dataset:
+            self.dataset = custom_dataset
+        else:
+            self.dataset = self._load_harness_from_csv()
+            
+    def _load_harness_from_csv(self):
+        fname = "harness_v4.csv"
+        data = []
+        try:
+            with open(fname, 'r', encoding='utf-8-sig') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    data.append(row)
+        except:
+            # 파일이 없으면 아쉬운 대로 빈 리스트라도...
+            return []
+        return data
+    
     def _call_llm_judge(self, prompt, response_text):
         if not self.judge_key:
             return "SKIPPED (No API Key)"
