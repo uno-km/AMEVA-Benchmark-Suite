@@ -1,4 +1,6 @@
-﻿import time
+﻿
+import datetime
+import time
 import requests
 import json
 import re
@@ -53,8 +55,8 @@ class SystemMonitor(QThread):
                     self.is_blackout = True
                     self.blackout_signal.emit(True)
             except: pass
-            time.sleep(0.5)
-
+            time.sleep(0.2)
+            
     def stop(self): self.is_running = False
 
 class BenchmarkRunner(QThread):
@@ -98,10 +100,15 @@ class BenchmarkRunner(QThread):
             except: pass
 
         for task in self.dataset:
-            self.log_signal.emit(f"\n [Task] {task.get('task', 'Custom')}")
+            current_time_str = datetime.datetime.now().strftime("%H:%M:%S")
+            # 1. 변수 초기화 (루프 밖에서 해야 유실 안 됨!)
+            prompt_n = 0
+            predict_n = 0
+            text_acc = ""
             start_time = time.time()
             first_token_time, ttft, tps = 0, 0, 0
-            text_acc = ""
+            
+            self.log_signal.emit(f"\n [Task] {task.get('task', 'Custom')}")
             
             # =================================================================
             # ✅ 엔진 종류에 맞춰 API 주소와 질문(Payload) 포맷을 다르게 세팅!
@@ -118,27 +125,36 @@ class BenchmarkRunner(QThread):
                 resp = requests.post(url, json=payload, stream=True)
                 for line in resp.iter_lines():
                     if not line: continue
-                    
+                    decoded_line = line.decode('utf-8')
+                                       
                     if first_token_time == 0:
                         first_token_time = time.time()
                         ttft = first_token_time - start_time
                         self.log_signal.emit(f"   TTFT 감지: {ttft:.3f}초")
-
-                    decoded_line = line.decode('utf-8')
                     
                     # =================================================================
                     # ✅ 파싱 로직 분기 (Ollama의 JSON vs llama.cpp의 SSE)
                     # =================================================================
+
                     if self.engine_type == "ENG":
                         if decoded_line.startswith("data: "):
                             json_str = decoded_line[6:]
                             if json_str.strip() == "[DONE]": break
-                            
                             data = json.loads(json_str)
-                            if 'content' in data: text_acc += data['content']
+                            
+                            if 'content' in data:
+                                token = data['content']
+                                text_acc += token
+                                # ✅ [UI 개선] 토큰 실황을 '시스템 콘솔'로 전송 (접두사 추가)
+                                # MainController에서 이 접두사를 보고 2번 탭으로 보낼 겁니다.
+                                self.log_signal.emit(f"SYS_RAW > {token}")
+
                             if data.get('stop'):
                                 timings = data.get('timings', {})
                                 tps = timings.get('predicted_per_second', 0)
+                                # ✅ [데이터 보존] 변수에 값 할당!
+                                prompt_n = timings.get('prompt_n', 0)
+                                predict_n = timings.get('predicted_n', 0)
                                 break
                     else:
                         data = json.loads(decoded_line)
@@ -167,11 +183,18 @@ class BenchmarkRunner(QThread):
             
             blackout_status = "O" if getattr(self, 'current_blackout_state', False) else "X"
 
+            # 벤치마크 루프가 끝나는 시점에 실행되는 최종 데이터 박제
             results.append({
-                "Task": task.get('task', 'Custom'), "Judge_Result": eval_result,
-                "TTFT(s)": round(ttft, 3), "Total_Time(s)": round(duration, 2), "TPS": round(tps, 2),
-                "Blackout_During_Test": blackout_status,
-                "Output_Preview": text_acc[:40].replace('\n', ' ')
+                "Timestamp": current_time_str,
+                "Task": task.get('task', 'Custom'), 
+                "Judge_Result": eval_result,         # ✅ 원본의 채점 결과 복구!
+                "TTFT(s)": round(ttft, 3), 
+                "Total_Time(s)": round(duration, 2), # ✅ 원본 변수 사용
+                "TPS": round(tps, 2), 
+                "Tokens_Sent": prompt_n,             # 🆕 추가: 입력 토큰 수
+                "Tokens_Gen": predict_n,             # 🆕 추가: 생성 토큰 수
+                "Blackout_During_Test": blackout_status, # ✅ 원본 키 이름 유지
+                "Full_Response": text_acc            # 🆕 추가: 40자 제한 없는 답변 전문
             })
             time.sleep(1)
 

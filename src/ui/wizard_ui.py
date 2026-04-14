@@ -67,7 +67,7 @@ class WizardUI(QWidget):
     def _on_boot_clicked(self):
         # 1. UI에서 설정값(Config) 파싱
         config = {
-            "engine": "ollama" if self.r_ollama.isChecked() else "llama.cpp",
+            "engine": "OLM" if self.r_ollama.isChecked() else "ENG",
             "cpu_cores": self.cpu_spin.value(), "ram_mb": self.ram_spin.value(),
             "gpu_layers": self.gpu_spin.value()
         }

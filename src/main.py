@@ -31,7 +31,7 @@ class MainController(QMainWindow):
         self.wizard.boot_btn.setText("커널 접속 중...")
         QApplication.processEvents()
 
-        self.current_engine_type = config.get("ENG", "OLM")
+        self.current_engine_type = config.get("engine", "OLM")
         success, msg = self.engine.boot_matrix(config)
         if success:
             # ✅ 대시보드 UI에 현재 엔진 상태를 전송!
@@ -57,19 +57,43 @@ class MainController(QMainWindow):
 
     def _save_report(self, results):
         fname = "Edge_v4_Singularity_Report.csv"
+        
+        # ✅ [수정] res["Engine"]과 res["Model"]을 기록하려면 fields에도 이름이 있어야 합니다!
+        fields = [
+            "Timestamp", "Engine", "Model", "Task", "Judge_Result", 
+            "TTFT(s)", "Total_Time(s)", "TPS", "Tokens_Sent", "Tokens_Gen", 
+            "Blackout_During_Test", "Full_Response"
+        ]
+        
+        file_exists = os.path.isfile(fname)
+        
         try:
-            with open(fname, 'w', newline='', encoding='utf-8-sig') as f:
-                writer = csv.DictWriter(f, fieldnames=["Task", "Judge_Result", "TTFT(s)", "Total_Time(s)", "TPS", "Blackout_During_Test", "Output_Preview"])
-                writer.writeheader()
-                writer.writerows(results)
-            self.dash.log(f"\n [완료] 특이점 리포트 저장됨: {os.path.abspath(fname)}")
-        except Exception as e: self.dash.log(f"오류: {e}")
-        self.dash.btn_run.setEnabled(True)
+            # ✅ 'a' (Append) 모드로 파일 열기
+            with open(fname, 'a', newline='', encoding='utf-8-sig') as f:
+                writer = csv.DictWriter(f, fieldnames=fields)
+                
+                # ✅ [수정] 파일이 아예 없을 때 '딱 한 번만' 헤더를 작성합니다.
+                if not file_exists:
+                    writer.writeheader()
+                
+                # ✅ [수정] 중복되던 writer.writeheader() 삭제 완료!
 
-    def closeEvent(self, event):
-        if self.monitor: self.monitor.stop()
-        self.engine.shutdown()
-        event.accept()
+                for res in results:
+                    # ✅ 데이터 매핑 (benchmark.py에서 보낸 데이터에 추가 정보 삽입)
+                    res["Engine"] = self.current_engine_type
+                    res["Model"] = self.dash.model_combo.currentText()
+                    
+                    # ✅ 이제 fields에 Engine과 Model이 있으므로 에러 없이 기록됩니다.
+                    writer.writerow(res)
+                    
+            self.dash.log(f"\n 📑 [확장 리포트] 누적 기록 완료: {os.path.abspath(fname)}")
+            
+        except Exception as e: 
+            self.dash.log(f" ❌ 리포트 저장 실패: {str(e)}")
+            print(f"DEBUG ERROR: {e}") # 터미널에서도 확인 가능하게
+            
+        # UI 버튼 복구
+        self.dash.btn_run.setEnabled(True)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

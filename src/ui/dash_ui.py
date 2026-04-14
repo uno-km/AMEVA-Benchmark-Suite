@@ -127,6 +127,7 @@ class DashUI(QWidget):
             # 4. 화면 전환 (메인 화면으로 돌아가기)
             # (현재 아키텍트님의 QStackedWidget이나 Main Window를 제어하는 함수를 여기에 연결하세요!)
             # 예시: self.parent().parent().setCurrentIndex(0) 
+            self.ctrl.stack.setCurrentIndex(0)
             print("[UI] 메인 통제실로 복귀 완료.")
         
         # 3. 사용자가 '아니오(No)'를 눌렀을 경우
