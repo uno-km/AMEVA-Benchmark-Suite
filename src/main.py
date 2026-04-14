@@ -188,7 +188,7 @@ class AMEVAController(QMainWindow):
         # 위저드로 복귀 전 로그 초기화 (#10)
         self.view_dash.clear_logs()
         self.stack.setCurrentIndex(0)
-        self.view_dash.show_toast("커널 닫기 완료. 안전하게 메인 화면으로 돌아왔습니다.")
+        self.view_dash.show_toast("커널 닫기, 마운트 해제, 접속 해제가 완료되었습니다.")
 
     def show_harness_manager(self):
         dialog = HarnessManagerUI(self)

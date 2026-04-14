@@ -29,12 +29,16 @@ class DashUI(QWidget):
         self.ctrl = ctrl
         self.specs = HardwareService.detect_capabilities()
 
-        # 텔레메트리 데이터 버퍼
-        self.cpu_data  = [0.0] * self._HISTORY
-        self.ram_data  = [0.0] * self._HISTORY
-        self.gpu_data  = [0.0] * self._HISTORY
-        self.tok_data  = [0]   * self._HISTORY   # 누적 토큰
+        # 텔레메트리 데이터 버퍼 (start-of-session부터 누적)
+        self.cpu_data  = []
+        self.ram_data  = []
+        self.gpu_data  = []
+        self.tok_data  = []
         self._tok_cum  = 0                         # 누적 토큰 카운터
+
+        # 로그 스트리밍 모드
+        self.is_streaming_enabled = False
+        self._stream_buttons = []
 
         self._setup()
 
@@ -49,12 +53,13 @@ class DashUI(QWidget):
         self.toast_label = QLabel("", self)
         self.toast_label.setObjectName("ToastLabel")
         self.toast_label.setStyleSheet(
-            "background-color: rgba(15, 23, 42, 0.92);"
+            "background-color: rgba(15, 23, 42, 0.96);"
             " color: #f8fafc;"
-            " border: 1px solid #334155;"
+            " border: 1px solid #60a5fa;"
             " border-radius: 12px;"
-            " padding: 10px;"
-            " font-size: 11px;"
+            " padding: 12px;"
+            " font-size: 12px;"
+            " font-weight: 600;"
         )
         self.toast_label.setWordWrap(True)
         self.toast_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
@@ -171,6 +176,10 @@ class DashUI(QWidget):
         self.bar_battery.setValue(100)
         hl.addWidget(self.lbl_battery)
         hl.addWidget(self.bar_battery)
+
+        self.lbl_ram_usage = QLabel("RAM Usage: 0%")
+        self.lbl_ram_usage.setStyleSheet("color: #94a3b8; font-size: 11px; margin-left: 12px;")
+        hl.addWidget(self.lbl_ram_usage)
         row.addWidget(health_grp)
 
         self.lbl_blackout = QLabel("")
@@ -189,11 +198,16 @@ class DashUI(QWidget):
         # CPU
         self.cpu_plot = pg.PlotWidget(title="CPU Load (%)")
         self.cpu_plot.setYRange(0, 100)
+        self.cpu_plot.showGrid(x=True, y=True, alpha=0.5)
+        self.cpu_plot.getAxis('left').setTicks([[(i, str(i)) for i in range(0, 101, 5)]])
         self.cpu_curve = self.cpu_plot.plot(pen=pg.mkPen('#3b82f6', width=2))
         row.addWidget(self.cpu_plot)
 
         # RAM
-        self.ram_plot = pg.PlotWidget(title="RAM (MB)")
+        self.ram_plot = pg.PlotWidget(title="RAM Usage (%)")
+        self.ram_plot.setYRange(0, 100)
+        self.ram_plot.showGrid(x=True, y=True, alpha=0.5)
+        self.ram_plot.getAxis('left').setTicks([[(i, str(i)) for i in range(0, 101, 5)]])
         self.ram_curve = self.ram_plot.plot(pen=pg.mkPen('#10b981', width=2))
         row.addWidget(self.ram_plot)
 
@@ -264,6 +278,18 @@ class DashUI(QWidget):
         expand_btn.clicked.connect(lambda _, c=console, t=title: self._overlay.show_for(c, t))
         hl.addWidget(expand_btn)
 
+        stream_btn = QPushButton("자유")
+        stream_btn.setCheckable(True)
+        stream_btn.setChecked(self.is_streaming_enabled)
+        stream_btn.setFixedSize(70, 22)
+        stream_btn.setStyleSheet(
+            "font-size: 10px; padding: 0; background-color: #475569; border: none;"
+            " color: #f8fafc; border-radius: 3px;"
+        )
+        stream_btn.clicked.connect(self._toggle_streaming)
+        self._stream_buttons.append(stream_btn)
+        hl.addWidget(stream_btn)
+
         vl.addWidget(hdr)
         vl.addWidget(console)
         return wrapper
@@ -277,12 +303,13 @@ class DashUI(QWidget):
         self.console.clear()
         self.sys_console.clear()
         # 텔레메트리 버퍼 리셋
-        self.cpu_data  = [0.0] * self._HISTORY
-        self.ram_data  = [0.0] * self._HISTORY
-        self.gpu_data  = [0.0] * self._HISTORY
-        self.tok_data  = [0]   * self._HISTORY
+        self.cpu_data  = []
+        self.ram_data  = []
+        self.gpu_data  = []
+        self.tok_data  = []
         self._tok_cum  = 0
         self.lbl_engine_info.setText("MATRIX STATUS: INITIALIZING...")
+        self.lbl_ram_usage.setText("RAM Usage: 0%")
         # 오버레이가 열려 있으면 닫기
         self._overlay.close_overlay()
 
@@ -315,23 +342,76 @@ class DashUI(QWidget):
     def update_engine_status(self, text: str):
         self.lbl_engine_info.setText(f"MATRIX STATUS: {text}")
 
+    def _toggle_streaming(self):
+        self.is_streaming_enabled = not self.is_streaming_enabled
+        for btn in self._stream_buttons:
+            btn.setChecked(self.is_streaming_enabled)
+            if self.is_streaming_enabled:
+                btn.setText("스트리밍")
+                btn.setStyleSheet(
+                    "font-size: 10px; padding: 0; background-color: #2563eb; border: none;"
+                    " color: #f8fafc; border-radius: 3px;"
+                )
+            else:
+                btn.setText("자유")
+                btn.setStyleSheet(
+                    "font-size: 10px; padding: 0; background-color: #475569; border: none;"
+                    " color: #f8fafc; border-radius: 3px;"
+                )
+
+    def _get_container_stats(self):
+        try:
+            container = getattr(self.ctrl.engine, 'container', None)
+            if container is not None and getattr(container, 'status', None) == 'running':
+                return container.stats(stream=False)
+        except Exception:
+            pass
+        return None
+
+    def _parse_container_stats(self, stats):
+        cpu_pct = 0.0
+        mem_pct = 0.0
+        used_mb = 0.0
+        limit_mb = 0.0
+        try:
+            mem = stats.get('memory_stats', {})
+            usage = mem.get('usage', 0)
+            limit = mem.get('limit', 0)
+            if limit > 0:
+                mem_pct = usage / limit * 100
+            used_mb = usage / 1024 / 1024
+            limit_mb = limit / 1024 / 1024
+
+            cpu_stats = stats.get('cpu_stats', {})
+            precpu = stats.get('precpu_stats', {})
+            cpu_delta = cpu_stats.get('cpu_usage', {}).get('total_usage', 0) - precpu.get('cpu_usage', {}).get('total_usage', 0)
+            system_delta = cpu_stats.get('system_cpu_usage', 0) - precpu.get('system_cpu_usage', 0)
+            online_cpus = cpu_stats.get('online_cpus') or len(cpu_stats.get('cpu_usage', {}).get('percpu_usage', []) or [1])
+            if system_delta > 0 and cpu_delta > 0:
+                cpu_pct = (cpu_delta / system_delta) * online_cpus * 100.0
+        except Exception:
+            pass
+        return cpu_pct, mem_pct, used_mb, limit_mb
+
     def update_token_count(self, delta: int):
         """실행 엔진으로부터 토큰 증분을 수신합니다."""
         self._tok_cum += delta
-        self.tok_data = self.tok_data[1:] + [self._tok_cum]
+        self.tok_data.append(self._tok_cum)
         self.tok_curve.setData(self.tok_data)
 
     def log_bench(self, text: str):
         self.console.append(text)
-        self.console.verticalScrollBar().setValue(
-            self.console.verticalScrollBar().maximum()
-        )
+        if self.is_streaming_enabled:
+            self.console.verticalScrollBar().setValue(
+                self.console.verticalScrollBar().maximum()
+            )
 
     def log_sys(self, text: str):
         self.sys_console.append(text)
-        self.sys_console.verticalScrollBar().setValue(
-            self.sys_console.verticalScrollBar().maximum()
-        )
+        if self.is_streaming_enabled:
+            self.sys_console.verticalScrollBar().setValue(
+                self.sys_console.verticalScrollBar().maximum()
+            )
 
     def apply_theme_to_graphs(self, is_dark: bool):
         bg = '#020617' if is_dark else '#ffffff'
@@ -367,13 +447,31 @@ class DashUI(QWidget):
     # ──────────────────────────────────────────────────────────────────
 
     def _poll_telemetry(self):
-        """QTimer 100ms 마다 psutil로 CPU/RAM을 실측합니다."""
+        """QTimer 100ms 마다 CPU/RAM을 측정합니다."""
         cpu = psutil.cpu_percent(interval=None)
-        mem = psutil.virtual_memory()
-        ram_mb = mem.used / 1024 / 1024
+        ram_percent = 0.0
+        ram_label_text = "RAM Usage: 0%"
 
-        self.cpu_data = self.cpu_data[1:] + [cpu]
-        self.ram_data = self.ram_data[1:] + [ram_mb]
+        stats = self._get_container_stats()
+        if stats is not None:
+            cpu_pct, mem_pct, used_mb, limit_mb = self._parse_container_stats(stats)
+            if cpu_pct > 0:
+                cpu = cpu_pct
+            ram_percent = mem_pct
+            ram_label_text = f"RAM Usage: {ram_percent:.1f}%"
+            if limit_mb > 0:
+                ram_label_text += f" ({used_mb:.1f}/{limit_mb:.0f}MB)"
+        else:
+            mem = psutil.virtual_memory()
+            ram_percent = mem.percent
+            used_mb = mem.used / 1024 / 1024
+            total_mb = mem.total / 1024 / 1024
+            ram_label_text = f"RAM Usage: {ram_percent:.1f}% ({used_mb:.0f}/{total_mb:.0f}MB)"
+
+        self.lbl_ram_usage.setText(ram_label_text)
+
+        self.cpu_data.append(cpu)
+        self.ram_data.append(ram_percent)
 
         self.cpu_curve.setData(self.cpu_data)
         self.ram_curve.setData(self.ram_data)
@@ -389,7 +487,7 @@ class DashUI(QWidget):
                 )
                 out, _ = proc.communicate(timeout=0.05)
                 gpu_pct = float(out.strip().split('\n')[0])
-                self.gpu_data = self.gpu_data[1:] + [gpu_pct]
+                self.gpu_data.append(gpu_pct)
                 self.gpu_curve.setData(self.gpu_data)
             except Exception:
                 pass
