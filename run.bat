@@ -92,6 +92,8 @@ set "PYSIDE_PATH=%VENV_BASE%\Lib\site-packages\PySide6"
 :: 시스템 경로보다 가상환경 경로를 최우선으로!
 set "PATH=%VENV_BASE%\Scripts;%PYSIDE_PATH%;%PYSIDE_PATH%\plugins;%PATH%"
 set "QT_QPA_PLATFORM_PLUGIN_PATH=%PYSIDE_PATH%\plugins\platforms"
+set "PYTHONPATH=%~dp0src"
+
 
 python src\main.py
 
