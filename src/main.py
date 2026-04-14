@@ -109,7 +109,8 @@ class MainController(QMainWindow):
 
     
 def init_harness_csv():
-        fname = "harness_v4.csv"
+        root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        fname = os.path.join(root_dir, "harness_v4.csv")
         if os.path.exists(fname): return # 이미 있으면 스킵
         
         harness_data = [

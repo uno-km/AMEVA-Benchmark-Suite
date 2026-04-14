@@ -77,7 +77,7 @@ class HarnessManagerUI(QWidget):
         save_btn.setStyleSheet("background-color: #059669; font-weight: bold;")
         save_btn.clicked.connect(self.save_to_csv)
         back_btn = QPushButton("◀ 뒤로가기")
-        back_btn.clicked.connect(lambda: self.ctrl.stack.setCurrentIndex(0))
+        back_btn.clicked.connect(lambda: self.ctrl.stack.setCurrentIndex(1)) # ✅ 1번 대시보드로 복귀!
         
         btn_layout.addWidget(add_btn)
         btn_layout.addWidget(edit_btn)

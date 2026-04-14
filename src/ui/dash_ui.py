@@ -1,5 +1,5 @@
 ﻿import os
-
+import csv   # ✅ CSV 파일 읽을 때 필수! (범인 검거)
 import pyqtgraph as pg
 from PySide6.QtWidgets import (QApplication, QMessageBox, QWidget, QVBoxLayout, QHBoxLayout, 
                                QLabel, QPushButton, QTextEdit, QComboBox, QGroupBox, 
