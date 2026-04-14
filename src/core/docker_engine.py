@@ -49,18 +49,24 @@ class MatrixEngine:
             except: pass
 
         try:
+            # 1. 엔진 종류에 따라 이미지, 명령어, 포트를 다르게 세팅!
             if engine_type == "ollama":
                 image = "ollama/ollama"
                 cmd = None
+                port_binding = {'11434/tcp': 11434}  # Ollama용 포트
             else:
                 image = "ghcr.io/ggml-org/llama.cpp:server"
-                # [기능 4] llama.cpp에 -ngl 옵션 동적 주입
                 cmd = ["-m", "/models/qwen2.5-0.5b.gguf", "-c", "2048", "--host", "0.0.0.0", "--port", "8080"]
+                port_binding = {'8080/tcp': 8080}  # ✅ llama.cpp용 포트!!
+            
             self._sys_log(f"[SYSTEM] '{image}' 이미지 마운트 및 부팅 시퀀스 가동...")
+            
+            # 2. 컨테이너 실행 시 동적으로 port_binding 변수를 넣습니다.
             self.container = self.client.containers.run(
                 image, command=cmd, name=self.container_name, detach=True,
                 nano_cpus=int(self.current_cpus * 1e9), mem_limit=ram_str, memswap_limit=ram_str,
-                ports={'11434/tcp': 11434}, volumes=volumes_config, device_requests=device_reqs
+                ports=port_binding, # 🚨 하드코딩 삭제하고 이걸로 교체!
+                volumes=volumes_config, device_requests=device_reqs
             )
             self.print_matrix_telemetry(self.container) 
             self._sys_log("\n[SYSTEM] 매트릭스 부팅 완료. 모델 GGUF RAM 적재 대기 중...")

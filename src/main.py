@@ -31,8 +31,12 @@ class MainController(QMainWindow):
         self.wizard.boot_btn.setText("커널 접속 중...")
         QApplication.processEvents()
 
+        self.current_engine_type = config.get("ENG", "OLM")
         success, msg = self.engine.boot_matrix(config)
         if success:
+            # ✅ 대시보드 UI에 현재 엔진 상태를 전송!
+            self.dash.set_engine_info(self.current_engine_type)
+            
             self.stack.setCurrentIndex(1)
             self.monitor = SystemMonitor(self.engine.container, self.engine)
             self.monitor.stats_signal.connect(self.dash.update_stats)
@@ -45,7 +49,7 @@ class MainController(QMainWindow):
         self.wizard.boot_btn.setText(" 하드코어 매트릭스 강제 부팅")
         
     def start_benchmark(self, model_name, custom_dataset, judge_key):
-        self.runner = BenchmarkRunner(model_name, custom_dataset, judge_key)
+        self.runner = BenchmarkRunner(model_name, custom_dataset, judge_key, self.current_engine_type)
         self.runner.current_blackout_state = False
         self.runner.log_signal.connect(self.dash.log)
         self.runner.report_signal.connect(self._save_report)

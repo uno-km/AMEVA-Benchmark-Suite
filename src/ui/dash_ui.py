@@ -17,6 +17,17 @@ class DashUI(QWidget):
         
         # 상단 제어부
         ctrl_layout = QHBoxLayout()
+        self.lbl_engine_type = QLabel("ENGINE: UNKNOWN")
+        self.lbl_engine_type.setStyleSheet("""
+            color: #00ffcc; 
+            background-color: #064e3b; 
+            padding: 5px 15px; 
+            border-radius: 5px; 
+            font-weight: bold;
+            border: 1px solid #10b981;
+        """)
+        ctrl_layout.addWidget(self.lbl_engine_type)
+        
         self.model_combo = QComboBox()
         self.model_combo.addItems(["qwen2.5:0.5b", "llama3.2:1b"])
         ctrl_layout.addWidget(QLabel("타겟 모델:"))
@@ -164,3 +175,11 @@ class DashUI(QWidget):
         self.sys_console.append(text)
         self.sys_console.verticalScrollBar().setValue(self.sys_console.verticalScrollBar().maximum())
         QApplication.processEvents() # UI 즉각 업데이트 (스피너 애니메이션을 위해 필수!)
+        
+    def set_engine_info(self, engine_code):
+        if engine_code == "ENG":
+            self.lbl_engine_type.setText("ENGINE: llama.cpp (ENG)")
+            self.lbl_engine_type.setStyleSheet("color: #00ffcc; background-color: #064e3b; padding: 5px 15px; border-radius: 5px; font-weight: bold; border: 1px solid #10b981;")
+        else:
+            self.lbl_engine_type.setText("ENGINE: Ollama (OLM)")
+            self.lbl_engine_type.setStyleSheet("color: #fbbf24; background-color: #78350f; padding: 5px 15px; border-radius: 5px; font-weight: bold; border: 1px solid #d97706;")
