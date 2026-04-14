@@ -1,5 +1,6 @@
 ﻿from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-                               QRadioButton, QPushButton, QComboBox, QGroupBox, QDoubleSpinBox, QSpinBox)
+                               QRadioButton, QPushButton, QComboBox, QGroupBox, 
+                               QDoubleSpinBox, QSpinBox, QMessageBox) # ✅ QMessageBox 추가
 from PySide6.QtCore import Qt
 
 class WizardUI(QWidget):
@@ -51,7 +52,10 @@ class WizardUI(QWidget):
         l.addWidget(hg)
 
         self.boot_btn = QPushButton(" 하드코어 매트릭스 강제 부팅")
-        self.boot_btn.clicked.connect(self._boot)
+        
+        # ✅ 두 개로 쪼개져 있던 연결을 하나로 통합!
+        self.boot_btn.clicked.connect(self._on_boot_clicked) 
+        
         l.addWidget(self.boot_btn)
         self._on_preset_change()
 
@@ -59,10 +63,31 @@ class WizardUI(QWidget):
         data = self.presets[self.hw_combo.currentText()]
         self.cpu_spin.setValue(data["cpu"]); self.ram_spin.setValue(data["ram"])
 
-    def _boot(self):
+    # ================= ✅ 대망의 부팅 통합 시퀀스 =================
+    def _on_boot_clicked(self):
+        # 1. UI에서 설정값(Config) 파싱
         config = {
             "engine": "ollama" if self.r_ollama.isChecked() else "llama.cpp",
             "cpu_cores": self.cpu_spin.value(), "ram_mb": self.ram_spin.value(),
             "gpu_layers": self.gpu_spin.value()
         }
+        
+        # 2. 엔진의 로거를 DashUI의 시스템 로그 탭에 연결!
+        # (main.py의 self.dash 이름에 정확히 맞췄습니다)
+        self.ctrl.engine.set_logger(self.ctrl.dash.log_sys)
+        
+        # 3. 화면을 대시보드(Index 1)로 즉시 전환!
+        # (main.py의 self.stack 이름에 정확히 맞췄습니다)
+        self.ctrl.stack.setCurrentIndex(1)
+        
+        # 4. 화면이 넘어가자마자 시스템 콘솔에 첫 메시지 투척
+        self.ctrl.dash.log_sys("🚀 [SYSTEM] 위저드 모드에서 매트릭스 전이 시퀀스 개시...")
+        
+        # 5. 메인 컨트롤러(main.py)의 execute_boot 호출!
+        # (이 안에서 도커 기동 + CPU/RAM 그래프 연동이 완벽하게 실행됩니다)
         self.ctrl.execute_boot(config)
+        
+        # 6. 만약 부팅에 실패해서 (main.py에서 에러를 띄운 후) 
+        # 엔진이 꺼져있다면 다시 첫 화면으로 강제 복귀!
+        if not self.ctrl.engine.container:
+            self.ctrl.stack.setCurrentIndex(0)

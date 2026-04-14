@@ -43,7 +43,7 @@ class MainController(QMainWindow):
         
         self.wizard.boot_btn.setEnabled(True)
         self.wizard.boot_btn.setText(" 하드코어 매트릭스 강제 부팅")
-
+        
     def start_benchmark(self, model_name, custom_dataset, judge_key):
         self.runner = BenchmarkRunner(model_name, custom_dataset, judge_key)
         self.runner.current_blackout_state = False
