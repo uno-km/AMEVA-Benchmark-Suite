@@ -1,139 +1,132 @@
-﻿import sys, os, csv
+import sys, os, csv
 from PySide6.QtWidgets import QApplication, QMainWindow, QStackedWidget, QMessageBox
-from core.docker_engine import MatrixEngine
-from core.benchmark import SystemMonitor, BenchmarkRunner
+from PySide6.QtCore import Qt
+
+# 모델 (데이터 및 사양)
+from models.hardware import HardwareService
+from models.report_db import ReportManager
+from models.settings import BenchmarkSession
+
+# UI (뷰)
 from ui.wizard_ui import WizardUI
 from ui.dash_ui import DashUI
-from ui.harness_ui import HarnessManagerUI # 추가
+from ui.style import PremiumStyle
+from ui.harness_ui import HarnessManagerUI
 
-class MainController(QMainWindow):
+# 엔진 (실행 로직)
+from core.matrix_engine import MatrixEngine
+from core.benchmark_manager import ExecutionEngine
+
+class AMEVAController(QMainWindow):
+    """[V5.5] 메인 컨트롤러 (MVC) - 벤치마크 슈트 전체를 조율합니다."""
+    
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("THE CODE GOD: EdgeMatrix Pro v4.0 [Singularity]")
-        self.setGeometry(100, 100, 1200, 850)
+        self.setWindowTitle("AMEVA EDGE MATRIX v5.5 [집약체]")
+        self.setGeometry(100, 100, 1280, 900)
         
-        qss_path = os.path.join(os.path.dirname(__file__), "..", "resources", "theme.qss")
-        if os.path.exists(qss_path):
-            with open(qss_path, "r", encoding="utf-8") as f: self.setStyleSheet(f.read())
+        # 프리미엄 테마 적용
+        self.setStyleSheet(PremiumStyle.MAIN_QSS)
 
+        # 1. 구성 요소 초기화
+        self.hardware = HardwareService.detect_capabilities()
+        self.db = ReportManager()
         self.engine = MatrixEngine()
-        self.monitor = None
-        self.runner = None
+        self.active_session = None
+        self.active_runner = None
 
+        # 2. 내비게이션 스택 설정
         self.stack = QStackedWidget()
         self.setCentralWidget(self.stack)
-        self.wizard = WizardUI(self)
-        self.dash = DashUI(self)
-        self.harness_mgr = HarnessManagerUI(self) # ✅ 관리 화면 생성
+
+        self.view_wizard = WizardUI(self)
+        self.view_dash = DashUI(self)
+        self.view_harness = HarnessManagerUI(self)
+
+        self.stack.addWidget(self.view_wizard)  # 인덱스 0
+        self.stack.addWidget(self.view_dash)    # 인덱스 1
+        self.stack.addWidget(self.view_harness) # 인덱스 2
+
+        # 3. 시그널 연결 (SRP 흐름)
+        self.view_dash.run_benchmark_signal.connect(self.handle_run_request)
+        self.view_dash.chaos_monkey_signal.connect(self.engine.inject_chaos)
+        self.view_dash.shutdown_signal.connect(self.handle_shutdown)
+
+    def execute_boot_sequence(self, session: BenchmarkSession):
+        """위저드에서 대시보드로 전환하며 도커 부팅을 실행합니다."""
+        self.active_session = session
         
-        self.stack.addWidget(self.wizard)      # Index 0
-        self.stack.addWidget(self.dash)        # Index 1
-        self.stack.addWidget(self.harness_mgr) # ✅ Index 2로 추가
-
-
-    # [추가] 하네스 관리 화면으로 이동하는 함수
-    def show_harness_manager(self):
-        self.harness_mgr.load_data() # 열 때마다 최신 CSV 로드
-        self.stack.setCurrentIndex(2)
+        # UI 전환
+        self.view_dash.log_sys("🚀 매트릭스 커널 초기화 중...")
+        self.stack.setCurrentIndex(1)
         
-    def execute_boot(self, config):
-        self.wizard.boot_btn.setEnabled(False)
-        self.wizard.boot_btn.setText("커널 접속 중...")
-        QApplication.processEvents()
+        # 엔진 부팅
+        self.engine.set_logger(self.view_dash.log_sys)
+        success, msg = self.engine.boot_matrix({
+            "engine": session.boot_config.engine,
+            "cpu_cores": session.boot_config.cpu_cores,
+            "ram_mb": session.boot_config.ram_mb,
+            "gpu_layers": session.boot_config.gpu_layers
+        })
 
-        self.current_engine_type = config.get("engine", "OLM")
-        success, msg = self.engine.boot_matrix(config)
         if success:
-            # ✅ 대시보드 UI에 현재 엔진 상태를 전송!
-            self.dash.set_engine_info(self.current_engine_type)
-            
-            self.stack.setCurrentIndex(1)
-            self.monitor = SystemMonitor(self.engine.container, self.engine)
-            self.monitor.stats_signal.connect(self.dash.update_stats)
-            self.monitor.blackout_signal.connect(self.dash.trigger_blackout)
-            self.monitor.start()
+            self.view_dash.update_engine_status(msg)
+            self.view_dash.log_sys("✅ 커널 온라인. 명령 대기 중.")
         else:
-            QMessageBox.critical(self, "Kernel Panic", f"부팅 실패:\n{msg}")
-        
-        self.wizard.boot_btn.setEnabled(True)
-        self.wizard.boot_btn.setText(" 하드코어 매트릭스 강제 부팅")
-        
-    def start_benchmark(self, model_name, custom_dataset, judge_key):
-        self.runner = BenchmarkRunner(model_name, custom_dataset, judge_key, self.current_engine_type)
-        self.runner.current_blackout_state = False
-        self.runner.log_signal.connect(self.dash.log)
-        self.runner.report_signal.connect(self._save_report)
-        self.runner.start()
+            QMessageBox.critical(self, "커널 패닉", f"부팅 실패: {msg}")
+            self.stack.setCurrentIndex(0)
 
-    def _save_report(self, results):
-        fname = "Edge_v4_Singularity_Report.csv"
+    def handle_run_request(self):
+        """대시보드에서 '런 태스크'가 클릭되었을 때 트리거됩니다."""
+        if not self.active_session: return
         
-        # ✅ [수정] res["Engine"]과 res["Model"]을 기록하려면 fields에도 이름이 있어야 합니다!
-        fields = [
-            "Timestamp", "Engine", "Model", "Task", "Judge_Result", 
-            "TTFT(s)", "Total_Time(s)", "TPS", "Tokens_Sent", "Tokens_Gen", 
-            "Blackout_During_Test", "Full_Response"
-        ]
-        
-        file_exists = os.path.isfile(fname)
-        
-        try:
-            # ✅ 'a' (Append) 모드로 파일 열기
-            with open(fname, 'a', newline='', encoding='utf-8-sig') as f:
-                writer = csv.DictWriter(f, fieldnames=fields)
-                
-                # ✅ [수정] 파일이 아예 없을 때 '딱 한 번만' 헤더를 작성합니다.
-                if not file_exists:
-                    writer.writeheader()
-                
-                # ✅ [수정] 중복되던 writer.writeheader() 삭제 완료!
+        # UI에서 선택된 현재 상태로 세션 업데이트
+        self.active_session.boot_config.model_name = self.view_dash.model_combo.currentText()
+        self.active_session.run_mode = self.view_dash.mode_combo.currentText()
+        self.active_session.judge_key = self.view_dash.api_key_input.text().strip()
 
-                for res in results:
-                    # ✅ 데이터 매핑 (benchmark.py에서 보낸 데이터에 추가 정보 삽입)
-                    res["Engine"] = self.current_engine_type
-                    res["Model"] = self.dash.model_combo.currentText()
-                    
-                    # ✅ 이제 fields에 Engine과 Model이 있으므로 에러 없이 기록됩니다.
-                    writer.writerow(res)
-                    
-            self.dash.log(f"\n 📑 [확장 리포트] 누적 기록 완료: {os.path.abspath(fname)}")
-            
-        except Exception as e: 
-            self.dash.log(f" ❌ 리포트 저장 실패: {str(e)}")
-            print(f"DEBUG ERROR: {e}") # 터미널에서도 확인 가능하게
-            
-        # UI 버튼 복구
-        self.dash.btn_run.setEnabled(True)
-
-    
-
-    
-def init_harness_csv():
-        root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-        fname = os.path.join(root_dir, "harness_v4.csv")
-        if os.path.exists(fname): return # 이미 있으면 스킵
+        # 하네스 데이터 로드 (DB 스타일)
+        harness = self._load_harness_data()
         
-        harness_data = [
-            {"task": "K-Math", "prompt": "영희는 사과 12개, 철수는 영희의 절반보다 2개 더 많고, 민수는 철수보다 3개 적어. 총 합계는?", "expected_regex": r"23", "eval_type": "regex"},
-            {"task": "K-Grammar", "prompt": "'나 어제 밥 먹다가 이빨 빠졌어'를 비즈니스 극존칭으로 바꿔.", "expected_regex": "", "eval_type": "llm_judge"},
-            {"task": "K-Coding", "prompt": "리스트에서 짝수만 골라 제곱 후 내림차순 정렬하는 파이썬 함수를 짜줘.", "expected_regex": "", "eval_type": "llm_judge"},
-            {"task": "K-Hallucination", "prompt": "세종대왕의 맥북 던짐 사건에 대해 자세히 설명해줘.", "expected_regex": r"(없습니다|사실이|허구|데이터가)", "eval_type": "regex"},
-            {"task": "E-Math", "prompt": "150 dollars with 20% discount and then 10% tax added. Final price?", "expected_regex": r"132", "eval_type": "regex"},
-            {"task": "E-Formal", "prompt": "Rewrite 'I can't make it to the meeting' into a formal business email.", "expected_regex": "", "eval_type": "llm_judge"},
-            {"task": "E-Logic", "prompt": "I have 3 brothers. Each has one sister. How many sisters do I have?", "expected_regex": r"(1|one)", "eval_type": "regex"},
-            {"task": "K-E-Mixed", "prompt": "'The deadline has been moved up to tomorrow'를 한글로 번역하고, 기한이 '당겨졌는지' 혹은 '미뤄졌는지' 판단해서 한글로 답한 뒤, 마감일을 뜻하는 영어 단어를 써줘.", "expected_regex": "", "eval_type": "llm_judge"}
-        ]
-        
-        with open(fname, 'w', newline='', encoding='utf-8-sig') as f:
-            writer = csv.DictWriter(f, fieldnames=["task", "prompt", "expected_regex", "eval_type"])
-            writer.writeheader()
-            writer.writerows(harness_data)
-        print(f"✅ {fname} 초기화 완료!")
+        self.view_dash.btn_run.setEnabled(False)
+        self.active_runner = ExecutionEngine(self.active_session, harness, self.engine)
+        self.active_runner.log_signal.connect(self.view_dash.log_bench)
+        self.active_runner.report_signal.connect(self.handle_report_generation)
+        self.active_runner.start()
 
+    def handle_report_generation(self, results):
+        """테스트를 마무리하고 CSV DB에 기록합니다."""
+        self.db.insert_batch(results)
+        self.view_dash.log_bench(f"\n📊 데이터가 Edge_v5_Singularity_Report.csv 에 영구 보존되었습니다.")
+        self.view_dash.btn_run.setEnabled(True)
+
+    def handle_shutdown(self):
+        """매트릭스를 파괴하고 위저드 화면으로 복귀합니다."""
+        self.engine.shutdown()
+        self.active_session = None
+        self.stack.setCurrentIndex(0)
+
+    def show_harness_manager(self):
+        self.stack.setCurrentIndex(2)
+
+    def _load_harness_data(self):
+        # 데이터셋 로딩 구현 (추후 모델로 이동 가능)
+        fname = "harness_v4.csv"
+        data = []
+        if os.path.exists(fname):
+            with open(fname, 'r', encoding='utf-8-sig') as f:
+                reader = csv.DictReader(f)
+                data = list(reader)
+        return data
 
 if __name__ == "__main__":
+    # 고해상도 DPI 스케일링 설정
+    QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
+    
     app = QApplication(sys.argv)
-    w = MainController()
-    init_harness_csv()
-    w.show()
+    app.setStyle("Fusion")
+    
+    controller = AMEVAController()
+    controller.show()
+    
     sys.exit(app.exec())
