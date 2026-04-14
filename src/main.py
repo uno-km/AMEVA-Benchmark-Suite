@@ -101,6 +101,7 @@ class AMEVAController(QMainWindow):
         if success:
             self.view_dash.update_engine_status(msg)
             self.view_dash.log_sys(f"✅ 부팅 완료: {msg}")
+            self.view_dash.show_toast("커널 온라인. 안전하게 연결되었습니다.")
         else:
             QMessageBox.critical(self, "커널 패닉", f"부팅 실패:\n{msg}")
             self.stack.setCurrentIndex(0)
@@ -146,17 +147,48 @@ class AMEVAController(QMainWindow):
             f"\n📊 {len(results)}건 결과가 Edge_v5_Singularity_Report.csv 에 저장되었습니다."
         )
         self.view_dash.btn_run.setEnabled(True)
+        self.view_dash.show_toast("벤치마크 완료. 결과가 안전하게 저장되었습니다.")
 
     # ──────────────────────────────────────────────────────────────────
     # Shutdown  (#10 로그 초기화 보장)
     # ──────────────────────────────────────────────────────────────────
 
     def handle_shutdown(self):
+        if self.active_runner and self.active_runner.isRunning():
+            answer = QMessageBox.question(
+                self, "작업 취소 확인",
+                "현재 벤치마크가 진행중입니다.\n작업을 취소하고 메인 화면으로 돌아가시겠습니까?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            if answer != QMessageBox.Yes:
+                return
+            self.active_runner.requestInterruption()
+            self.view_dash.show_toast("벤치마크 취소 요청 중... 안전하게 종료합니다.")
+            self.active_runner.wait(2000)
+
+        elif self._boot_thread and self._boot_thread.isRunning():
+            answer = QMessageBox.question(
+                self, "부팅 취소 확인",
+                "커널 부팅 또는 초기화가 진행중입니다.\n메인 화면으로 돌아가시겠습니까?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            if answer != QMessageBox.Yes:
+                return
+            self._boot_thread.requestInterruption()
+            self.view_dash.show_toast("부팅 취소 요청 중... 안전하게 돌아갑니다.")
+            self._boot_thread.wait(2000)
+
         self.engine.shutdown()
         self.active_session = None
+        self.active_runner = None
+        self._boot_thread = None
+        self.view_dash.btn_run.setEnabled(True)
         # 위저드로 복귀 전 로그 초기화 (#10)
         self.view_dash.clear_logs()
         self.stack.setCurrentIndex(0)
+        self.view_dash.show_toast("커널 닫기 완료. 안전하게 메인 화면으로 돌아왔습니다.")
 
     def show_harness_manager(self):
         dialog = HarnessManagerUI(self)

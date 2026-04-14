@@ -41,6 +41,26 @@ class DashUI(QWidget):
         # 오버레이 (DashUI 위에 float)
         self._overlay = LogOverlay(self)
 
+        # Toast notification
+        self.toast_timer = QTimer(self)
+        self.toast_timer.setSingleShot(True)
+        self.toast_timer.timeout.connect(self._hide_toast)
+
+        self.toast_label = QLabel("", self)
+        self.toast_label.setObjectName("ToastLabel")
+        self.toast_label.setStyleSheet(
+            "background-color: rgba(15, 23, 42, 0.92);"
+            " color: #f8fafc;"
+            " border: 1px solid #334155;"
+            " border-radius: 12px;"
+            " padding: 10px;"
+            " font-size: 11px;"
+        )
+        self.toast_label.setWordWrap(True)
+        self.toast_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.toast_label.setFixedWidth(340)
+        self.toast_label.hide()
+
         # 0.1s 텔레메트리 타이머
         self._tel_timer = QTimer(self)
         self._tel_timer.setInterval(100)
@@ -266,6 +286,28 @@ class DashUI(QWidget):
         # 오버레이가 열려 있으면 닫기
         self._overlay.close_overlay()
 
+    def show_toast(self, message: str, duration_ms: int = 3200):
+        self.toast_timer.stop()
+        self.toast_label.setText(message)
+        self.toast_label.adjustSize()
+        self._position_toast()
+        self.toast_label.show()
+        self.toast_timer.start(duration_ms)
+
+    def _hide_toast(self):
+        self.toast_label.hide()
+
+    def _position_toast(self):
+        margin = 16
+        w = self.toast_label.width()
+        h = self.toast_label.height()
+        self.toast_label.setGeometry(
+            self.width() - w - margin,
+            self.height() - h - margin,
+            w,
+            h
+        )
+
     def focus_log_tab(self):
         """커널 텔레메트리 탭을 활성화합니다 (인덱스 1)."""
         self.tabs.setCurrentIndex(1)
@@ -362,4 +404,6 @@ class DashUI(QWidget):
     def resizeEvent(self, event):
         if self._overlay.isVisible():
             self._overlay.setGeometry(0, 0, self.width(), self.height())
+        if self.toast_label.isVisible():
+            self._position_toast()
         super().resizeEvent(event)

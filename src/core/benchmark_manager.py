@@ -94,6 +94,8 @@ class ExecutionEngine(QThread):
     # ── Thread entry ───────────────────────────────────────────────────
 
     def run(self):
+        if self.isInterruptionRequested():
+            return
         if "Stress" in self.session.run_mode or "Hard" in self.session.run_mode:
             self._run_stress_mode()
         else:
@@ -109,6 +111,10 @@ class ExecutionEngine(QThread):
         if "Efficiency" in self.session.run_mode:
             pw_tracker.start()
         start_time = time.time()
+
+        if self.isInterruptionRequested():
+            self._slog("[INFO] 스트레스 테스트 취소 요청 수신.")
+            return
 
         opts = {
             'threads': self.session.stress_config.threads,
@@ -176,6 +182,10 @@ class ExecutionEngine(QThread):
             self._slog(f"LLAMA.CPP 엔드포인트: {url}")
 
         for idx, task in enumerate(self.dataset):
+            if self.isInterruptionRequested():
+                self._slog("[INFO] 벤치마크 취소 요청 수신.")
+                break
+
             self._slog(f"─── Task [{idx+1}/{len(self.dataset)}]: {task.get('task','?')} ───")
 
             pw_tracker = PowerTracker()
@@ -208,6 +218,9 @@ class ExecutionEngine(QThread):
                         self._slog(f"[에러] LLAMA.CPP 서버 상태 {resp.status_code}: {resp.text[:200]}")
                     else:
                         for raw_line in resp.iter_lines(decode_unicode=True):
+                            if self.isInterruptionRequested():
+                                self._slog("[INFO] 벤치마크 취소 요청 수신.")
+                                break
                             if not raw_line:
                                 continue
                             decoded = raw_line.strip()
@@ -237,10 +250,12 @@ class ExecutionEngine(QThread):
                 else:
                     resp = requests.post(url, json=payload, stream=True, timeout=120)
                     for raw_line in resp.iter_lines(decode_unicode=True):
+                        if self.isInterruptionRequested():
+                            self._slog("[INFO] 벤치마크 취소 요청 수신.")
+                            break
                         if not raw_line:
                             continue
                         decoded = raw_line.strip()
-
                         data = json.loads(decoded)
 
                         if ttft == 0:
