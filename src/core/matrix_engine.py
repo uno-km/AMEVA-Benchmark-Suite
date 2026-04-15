@@ -19,10 +19,19 @@ class MatrixEngine:
         if self.log_callback:
             self.log_callback(msg) 
 
+    def _get_docker_client(self):
+        try:
+            return docker.from_env()
+        except docker.errors.DockerException as e:
+            raise RuntimeError(
+                "Docker 데몬에 연결할 수 없습니다. Docker Desktop이 실행 중인지, Docker Engine이 활성화되어 있는지 확인하세요. "
+                f"상세 오류: {e}"
+            ) from e
+
     def cleanup_old_arena(self):
         """기존 컨테이너를 정리합니다."""
         try:
-            client = docker.from_env()
+            client = self._get_docker_client()
             client.containers.get(self.container_name).remove(force=True)
             self._log("✓ 이전 컨테이너 제거 완료")
         except docker.errors.NotFound:
@@ -39,7 +48,7 @@ class MatrixEngine:
 
         try:
             self._log("Docker 클라이언트 초기화 중...")
-            client = docker.from_env()
+            client = self._get_docker_client()
             self._log("✓ Docker 데몬 연결 성공")
 
             # Cleanup

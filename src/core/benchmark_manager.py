@@ -91,6 +91,31 @@ class ExecutionEngine(QThread):
         except Exception as e:
             return f"판정_에러: {e}"
 
+    def _post_stream_with_fallback(self, base_url: str, payload: dict, engine_type: str):
+        endpoints = [base_url]
+        if engine_type == "ENG":
+            if base_url.endswith("/completion"):
+                endpoints.append(base_url.replace("/completion", "/v1/completions"))
+        else:
+            if base_url.endswith("/api/generate"):
+                endpoints.append(base_url.replace("/api/generate", "/v1/completions"))
+
+        last_error = None
+        for endpoint in endpoints:
+            try:
+                resp = requests.post(endpoint, json=payload, stream=True, timeout=20)
+                if resp.status_code == 200:
+                    if endpoint != base_url:
+                        self._slog(f"[INFO] 대체 엔드포인트 사용: {endpoint}")
+                    return resp
+                self._slog(f"[WARN] {endpoint} HTTP {resp.status_code} - {resp.text[:180]}")
+            except Exception as e:
+                self._slog(f"[WARN] {endpoint} 연결 실패: {e}")
+                last_error = e
+        if last_error:
+            raise last_error
+        raise RuntimeError("엔드포인트를 찾을 수 없습니다.")
+
     # ── Thread entry ───────────────────────────────────────────────────
 
     def run(self):
@@ -208,42 +233,39 @@ class ExecutionEngine(QThread):
 
             try:
                 if engine_type == "ENG":
-                    resp = requests.post(url, json=payload, stream=True, timeout=120)
-                    if resp.status_code != 200:
-                        self._slog(f"[에러] LLAMA.CPP 서버 상태 {resp.status_code}: {resp.text[:200]}")
-                    else:
-                        for raw_line in resp.iter_lines(decode_unicode=True):
-                            if self.isInterruptionRequested():
-                                self._slog("[INFO] 벤치마크 취소 요청 수신.")
-                                break
-                            if not raw_line:
-                                continue
-                            decoded = raw_line.strip()
-                            if not decoded.startswith("data: "):
-                                continue
-                            decoded = decoded[6:]
-                            if decoded == "[DONE]":
-                                break
+                    resp = self._post_stream_with_fallback(url, payload, engine_type)
+                    for raw_line in resp.iter_lines(decode_unicode=True):
+                        if self.isInterruptionRequested():
+                            self._slog("[INFO] 벤치마크 취소 요청 수신.")
+                            break
+                        if not raw_line:
+                            continue
+                        decoded = raw_line.strip()
+                        if not decoded.startswith("data: "):
+                            continue
+                        decoded = decoded[6:]
+                        if decoded == "[DONE]":
+                            break
 
-                            data = json.loads(decoded)
-                            if ttft == 0:
-                                ttft = (time.time() - start_time) * 1000
+                        data = json.loads(decoded)
+                        if ttft == 0:
+                            ttft = (time.time() - start_time) * 1000
 
-                            token = data.get('content', '')
-                            text_acc += token
-                            tok_count += len(data.get('tokens', [])) or len(token.split())
-                            self._slog(f"[CPP] token: {repr(token)}")
-                            self.token_signal.emit(1)
+                        token = data.get('content', '')
+                        text_acc += token
+                        tok_count += len(data.get('tokens', [])) or len(token.split())
+                        self._slog(f"[CPP] token: {repr(token)}")
+                        self.token_signal.emit(1)
 
-                            if data.get('stop'):
-                                t_info = data.get('timings', {})
-                                pn = t_info.get('prompt_n', 0)
-                                pm = t_info.get('prompt_ms', 0)
-                                prompt_ms_per_t = round(pm / pn, 2) if pn > 0 else 0
-                                sample_ms = t_info.get('predicted_ms', 0)
-                                break
+                        if data.get('stop'):
+                            t_info = data.get('timings', {})
+                            pn = t_info.get('prompt_n', 0)
+                            pm = t_info.get('prompt_ms', 0)
+                            prompt_ms_per_t = round(pm / pn, 2) if pn > 0 else 0
+                            sample_ms = t_info.get('predicted_ms', 0)
+                            break
                 else:
-                    resp = requests.post(url, json=payload, stream=True, timeout=120)
+                    resp = self._post_stream_with_fallback(url, payload, engine_type)
                     for raw_line in resp.iter_lines(decode_unicode=True):
                         if self.isInterruptionRequested():
                             self._slog("[INFO] 벤치마크 취소 요청 수신.")
