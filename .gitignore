@@ -11,10 +11,14 @@ __pycache__/
 *$py.class
 
 # 2. 초거대 AI 모델 파일 (Github 용량 폭발 방지)
-models/
+/models/
 *.gguf
 *.bin
 *.safetensors
+
+# src 경로에 있는 실제 애플리케이션 소스 패키지는 커밋 대상
+!/src/models/
+!/src/models/**
 
 # 3. 벤치마크 결과 리포트 및 로그 (동적 생성 파일)
 *.csv
