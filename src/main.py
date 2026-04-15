@@ -1,3 +1,7 @@
+"""
+main.py  –  AMEVA EDGE MATRIX v5.6 메인 컨트롤러 (MVC)
+변경: 채팅 벤치마크 핸들러 + 모델명 상태 연동
+"""
 import sys
 import os
 import csv
@@ -25,71 +29,72 @@ from ui.harness_ui import HarnessManagerUI
 from core.matrix_engine import MatrixEngine
 from core.benchmark_manager import ExecutionEngine
 from core.boot_thread import BootThread
+from core.chat_benchmark_engine import ChatBenchmarkEngine
 
 
 class AMEVAController(QMainWindow):
-    """[V5.5] 메인 컨트롤러 (MVC)"""
+    """[V5.6] 메인 컨트롤러 (MVC)"""
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("AMEVA EDGE MATRIX v5.5")
-        # 노트북 친화적 크기
-        self.setGeometry(100, 80, 1100, 750)
-        self.setMinimumSize(900, 620)
+        self.setWindowTitle("AMEVA EDGE MATRIX v5.6")
+        self.setGeometry(100, 80, 1180, 760)
+        self.setMinimumSize(920, 640)
 
-        # ── 테마 ──────────────────────────────────────────────────────
+        # ── 테마 ─────────────────────────────────────────────────────────
         self.is_dark_mode = True
         self.setStyleSheet(PremiumStyle.get_qss(self.is_dark_mode))
 
-        # ── 구성 요소 초기화 ──────────────────────────────────────────
+        # ── 구성 요소 초기화 ──────────────────────────────────────────────
         self.hardware       = HardwareService.detect_capabilities()
         self.db             = ReportManager()
         self.engine         = MatrixEngine()
         self.active_session = None
         self.active_runner  = None
         self._boot_thread   = None
+        self._chat_runner   = None
 
-        # ── 내비게이션 스택 ───────────────────────────────────────────
+        # ── 내비게이션 스택 ───────────────────────────────────────────────
         self.stack = QStackedWidget()
         self.setCentralWidget(self.stack)
 
-        self.view_wizard  = WizardUI(self)
-        self.view_dash    = DashUI(self)
+        self.view_wizard = WizardUI(self)
+        self.view_dash   = DashUI(self)
 
         self.stack.addWidget(self.view_wizard)   # 0
         self.stack.addWidget(self.view_dash)     # 1
 
-        # ── 시그널 연결 ───────────────────────────────────────────────
+        # ── 시그널 연결 ───────────────────────────────────────────────────
         self.view_dash.run_benchmark_signal.connect(self.handle_run_request)
         self.view_dash.chaos_monkey_signal.connect(self.engine.inject_chaos)
         self.view_dash.shutdown_signal.connect(self.handle_shutdown)
+        self.view_dash.chat_prompt_signal.connect(self.handle_chat_prompt)
 
-    # ──────────────────────────────────────────────────────────────────
+    # ──────────────────────────────────────────────────────────────────────
     # Theme
-    # ──────────────────────────────────────────────────────────────────
+    # ──────────────────────────────────────────────────────────────────────
 
     def toggle_theme(self):
         self.is_dark_mode = not self.is_dark_mode
         self.setStyleSheet(PremiumStyle.get_qss(self.is_dark_mode))
         self.view_dash.apply_theme_to_graphs(self.is_dark_mode)
 
-    # ──────────────────────────────────────────────────────────────────
-    # Boot Sequence  (#6 즉시 화면 전환 + #7 로그탭 포커스)
-    # ──────────────────────────────────────────────────────────────────
+    # ──────────────────────────────────────────────────────────────────────
+    # Boot Sequence
+    # ──────────────────────────────────────────────────────────────────────
 
     def execute_boot_sequence(self, session: BenchmarkSession):
         self.active_session = session
 
-        # 1. 로그 초기화 (#10)
+        # 기본 모델명을 세션에 주입
+        self.active_session.boot_config.model_name = (
+            self.view_dash.get_active_model()
+        )
+
         self.view_dash.clear_logs()
-
-        # 2. 즉시 대시보드로 전환 (#6)
         self.stack.setCurrentIndex(1)
-
-        # 3. 커널 텔레메트리 탭 포커스 (#7)
         self.view_dash.focus_log_tab()
 
-        # 4. 비동기 부팅 스레드 시작 (#8, #9)
         self._boot_thread = BootThread(
             config={
                 "engine":    session.boot_config.engine,
@@ -112,15 +117,16 @@ class AMEVAController(QMainWindow):
             QMessageBox.critical(self, "커널 패닉", f"부팅 실패:\n{msg}")
             self.stack.setCurrentIndex(0)
 
-    # ──────────────────────────────────────────────────────────────────
-    # Benchmark Run (#13 sys_log_signal 연결)
-    # ──────────────────────────────────────────────────────────────────
+    # ──────────────────────────────────────────────────────────────────────
+    # Benchmark Run
+    # ──────────────────────────────────────────────────────────────────────
 
     def handle_run_request(self):
         if not self.active_session:
             return
 
-        self.active_session.boot_config.model_name = self.view_dash.model_combo.currentText()
+        # 모델명을 DashUI 레이블에서 읽음 (콤보박스 제거)
+        self.active_session.boot_config.model_name = self.view_dash.get_active_model()
         self.active_session.run_mode               = self.view_dash.mode_combo.currentText()
         self.active_session.judge_key              = self.view_dash.api_key_input.text().strip()
 
@@ -133,17 +139,24 @@ class AMEVAController(QMainWindow):
             )
             return
 
+        # 채팅 패널이 열려 있으면 Run 차단
+        if self.view_dash.chat_panel.is_open():
+            QMessageBox.information(
+                self, "채팅 모드 활성",
+                "대화형 벤치마크 모드가 켜져 있습니다.\n"
+                "채팅 벤치마크 버튼을 눌러 종료한 뒤 RUN을 사용하세요."
+            )
+            return
+
         self.view_dash.btn_run.setEnabled(False)
+        self.view_dash.btn_chat.setEnabled(False)
+
         self.active_runner = ExecutionEngine(
             self.active_session, harness, self.engine
         )
-        # Analytics 탭
         self.active_runner.log_signal.connect(self.view_dash.log_bench)
-        # Kernel Telemetry 탭 (엔진 원시 출력) (#13)
         self.active_runner.sys_log_signal.connect(self.view_dash.log_sys)
-        # Token 그래프 (#12)
         self.active_runner.token_signal.connect(self.view_dash.update_token_count)
-        # 완료 처리
         self.active_runner.report_signal.connect(self.handle_report_generation)
         self.active_runner.start()
 
@@ -153,11 +166,61 @@ class AMEVAController(QMainWindow):
             f"\n📊 {len(results)}건 결과가 Edge_v5_Singularity_Report.csv 에 저장되었습니다."
         )
         self.view_dash.btn_run.setEnabled(True)
+        self.view_dash.btn_chat.setEnabled(True)
         self.view_dash.show_toast("벤치마크 완료. 결과가 안전하게 저장되었습니다.")
 
-    # ──────────────────────────────────────────────────────────────────
-    # Shutdown  (#10 로그 초기화 보장)
-    # ──────────────────────────────────────────────────────────────────
+    # ──────────────────────────────────────────────────────────────────────
+    # Chat Benchmark
+    # ──────────────────────────────────────────────────────────────────────
+
+    def handle_chat_prompt(self, prompt: str):
+        """DashUI 채팅창에서 프롬프트가 전송되면 호출됩니다."""
+        if not self.active_session:
+            self.view_dash.show_toast("⚠ 먼저 커널 부팅 시퀀스를 시작하세요.")
+            return
+
+        if self._chat_runner and self._chat_runner.isRunning():
+            self.view_dash.show_toast("⏳ 이전 채팅 추론이 진행 중입니다.")
+            return
+
+        # 세션 모델명 동기화
+        self.active_session.boot_config.model_name = self.view_dash.get_active_model()
+        self.active_session.judge_key = self.view_dash.api_key_input.text().strip()
+
+        # AI 말풍선 미리 생성 (스트리밍 청크가 여기에 쌓임)
+        self.view_dash.chat_panel.set_waiting(True, "⏳ AI 추론 중…")
+        self.view_dash.chat_panel.append_ai_message("")   # 빈 버블 생성
+
+        self._chat_runner = ChatBenchmarkEngine(
+            prompt=prompt,
+            session=self.active_session,
+            engine_core=self.engine,
+            db=self.db,
+        )
+        self._chat_runner.token_signal.connect(self.view_dash.update_token_count)
+        self._chat_runner.sys_log_signal.connect(self.view_dash.log_sys)
+        self._chat_runner.chunk_signal.connect(self.view_dash.chat_panel.append_ai_chunk)
+        self._chat_runner.done_signal.connect(self.handle_chat_done)
+        self._chat_runner.error_signal.connect(self._on_chat_error)
+        self._chat_runner.start()
+
+    def handle_chat_done(self, result: dict, response_text: str):
+        self.view_dash.chat_panel.set_waiting(False)
+        tps = result.get("Generation (t/s)", 0)
+        ttft = result.get("TTFT (ms)", 0)
+        self.view_dash.log_bench(
+            f"💬 [CHAT_MOD]  TTFT: {ttft}ms  |  {tps} t/s  |  CSV 저장 완료"
+        )
+        self.view_dash.show_toast(f"✅ 채팅 벤치마크 완료 – {tps} t/s")
+
+    def _on_chat_error(self, msg: str):
+        self.view_dash.chat_panel.set_waiting(False)
+        self.view_dash.chat_panel.append_ai_message(f"❌ 오류: {msg}")
+        self.view_dash.show_toast(f"❌ 채팅 추론 오류: {msg[:60]}")
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Shutdown
+    # ──────────────────────────────────────────────────────────────────────
 
     def handle_shutdown(self):
         if self.active_runner and self.active_runner.isRunning():
@@ -186,12 +249,18 @@ class AMEVAController(QMainWindow):
             self.view_dash.show_toast("부팅 취소 요청 중... 안전하게 돌아갑니다.")
             self._boot_thread.wait(2000)
 
+        # 채팅 러너도 정리
+        if self._chat_runner and self._chat_runner.isRunning():
+            self._chat_runner.requestInterruption()
+            self._chat_runner.wait(1000)
+
         self.engine.shutdown()
         self.active_session = None
-        self.active_runner = None
-        self._boot_thread = None
+        self.active_runner  = None
+        self._boot_thread   = None
+        self._chat_runner   = None
         self.view_dash.btn_run.setEnabled(True)
-        # 위저드로 복귀 전 로그 초기화 (#10)
+        self.view_dash.btn_chat.setEnabled(True)
         self.view_dash.clear_logs()
         self.stack.setCurrentIndex(0)
         self.view_dash.show_toast("커널 닫기, 마운트 해제, 접속 해제가 완료되었습니다.")
@@ -202,7 +271,7 @@ class AMEVAController(QMainWindow):
 
     def _load_harness_data(self):
         fname = "harness_v4.csv"
-        data = []
+        data  = []
         if os.path.exists(fname):
             with open(fname, 'r', encoding='utf-8-sig') as f:
                 reader = csv.DictReader(f)

@@ -1,14 +1,19 @@
+"""
+dash_ui.py  –  AMEVA Dashboard UI (V5.6)
+변경: 채팅 사이드바 슬라이딩 레이아웃, 모델 갤러리 버튼, 보고서 버튼
+"""
 import psutil
 import pyqtgraph as pg
 from datetime import datetime
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QTextEdit, QComboBox, QGroupBox, QLineEdit, QProgressBar,
-    QTabWidget, QFrame, QSizePolicy
+    QTabWidget, QFrame, QSizePolicy, QSplitter
 )
 from PySide6.QtCore import Qt, Signal, QTimer
 from models.hardware import HardwareService
 from ui.log_overlay import LogOverlay
+from ui.chat_panel import ChatPanel
 
 
 def _ts() -> str:
@@ -18,18 +23,19 @@ def _ts() -> str:
 
 class DashUI(QWidget):
     run_benchmark_signal = Signal()
-    chaos_monkey_signal = Signal()
-    shutdown_signal = Signal()
+    chaos_monkey_signal  = Signal()
+    shutdown_signal      = Signal()
+    chat_prompt_signal   = Signal(str)   # 채팅 프롬프트 → 컨트롤러
 
     # 히스토리 길이 (0.1s × 300 = 30초 분량)
     _HISTORY = 300
 
     def __init__(self, ctrl):
-        super().__init__()
-        self.ctrl = ctrl
+        super().__init__(ctrl)
+        self.ctrl  = ctrl
         self.specs = HardwareService.detect_capabilities()
 
-        # 텔레메트리 데이터 버퍼 (start-of-session부터 누적)
+        # 텔레메트리 버퍼
         self.cpu_data  = []
         self.ram_data  = []
         self.gpu_data  = []
@@ -38,21 +44,24 @@ class DashUI(QWidget):
         self.ram_x     = []
         self.gpu_x     = []
         self.tok_x     = []
-        self._tok_cum  = 0                         # 누적 토큰 카운터
+        self._tok_cum  = 0
         self._telemetry_index = 0
         self._user_panned = False
         self._suppress_range_change = False
 
-        # 로그 스트리밍 모드
+        # 스트리밍 모드
         self.is_streaming_enabled = False
         self._stream_buttons = []
 
+        # 현재 선택 모델명 (콤보박스 대체)
+        self._active_model = "qwen2.5:1.5b"
+
         self._setup()
 
-        # 오버레이 (DashUI 위에 float)
+        # 오버레이
         self._overlay = LogOverlay(self)
 
-        # Toast notification
+        # Toast
         self.toast_timer = QTimer(self)
         self.toast_timer.setSingleShot(True)
         self.toast_timer.timeout.connect(self._hide_toast)
@@ -73,15 +82,15 @@ class DashUI(QWidget):
         self.toast_label.setFixedWidth(340)
         self.toast_label.hide()
 
-        # 0.1s 텔레메트리 타이머
+        # 0.1s 텔레메트리
         self._tel_timer = QTimer(self)
         self._tel_timer.setInterval(100)
         self._tel_timer.timeout.connect(self._poll_telemetry)
         self._tel_timer.start()
 
-    # ──────────────────────────────────────────────────────────────────
+    # ────────────────────────────────────────────────────────────────────────
     # Layout
-    # ──────────────────────────────────────────────────────────────────
+    # ────────────────────────────────────────────────────────────────────────
 
     def _setup(self):
         root = QVBoxLayout(self)
@@ -90,11 +99,31 @@ class DashUI(QWidget):
 
         root.addWidget(self._build_control_bar())
         root.addLayout(self._build_telemetry_bar())
-        root.addLayout(self._build_graphs(), stretch=3)
-        root.addWidget(self._build_console_tabs(), stretch=4)
+
+        # ── Side-by-side: 중앙 컨텐츠 + 채팅 사이드바 ─────────────────
+        center_and_chat = QHBoxLayout()
+        center_and_chat.setSpacing(0)
+        center_and_chat.setContentsMargins(0, 0, 0, 0)
+
+        # 중앙 컨텐츠 (그래프 + 콘솔)
+        self._content_area = QWidget()
+        content_vl = QVBoxLayout(self._content_area)
+        content_vl.setContentsMargins(0, 0, 0, 0)
+        content_vl.setSpacing(10)
+        content_vl.addLayout(self._build_graphs(), stretch=3)
+        content_vl.addWidget(self._build_console_tabs(), stretch=4)
+
+        self.chat_panel = ChatPanel()
+        self.chat_panel.chat_submitted.connect(self.chat_prompt_signal.emit)
+
+        center_and_chat.addWidget(self._content_area, 1)
+        center_and_chat.addWidget(self.chat_panel, 0)
+
+        root.addLayout(center_and_chat, stretch=7)
+
         self.apply_theme_to_graphs(True)
 
-    # ── Control bar ───────────────────────────────────────────────────
+    # ── Control bar ──────────────────────────────────────────────────────
 
     def _build_control_bar(self) -> QFrame:
         card = QFrame()
@@ -105,7 +134,7 @@ class DashUI(QWidget):
         )
         cl = QHBoxLayout(card)
         cl.setContentsMargins(14, 10, 14, 10)
-        cl.setSpacing(10)
+        cl.setSpacing(8)
 
         self.lbl_engine_info = QLabel("MATRIX STATUS: INITIALIZING...")
         self.lbl_engine_info.setStyleSheet(
@@ -114,11 +143,21 @@ class DashUI(QWidget):
         cl.addWidget(self.lbl_engine_info)
         cl.addStretch()
 
-        self.model_combo = QComboBox()
-        self.model_combo.addItems(["qwen2.5:0.5b", "llama3.2:1b", "gemma2:2b"])
-        cl.addWidget(QLabel("Model:"))
-        cl.addWidget(self.model_combo)
+        # ── 모델 변경 버튼 (콤보박스 대체) ─────────────────────────────
+        self._lbl_active_model = QLabel(f"모델: {self._active_model}")
+        self._lbl_active_model.setStyleSheet(
+            "color: #94a3b8; font-size: 11px; border: none;"
+        )
+        cl.addWidget(self._lbl_active_model)
 
+        self.btn_model = QPushButton("🛠️ 모델 변경")
+        self.btn_model.setObjectName("ModelBtn")
+        self.btn_model.setFixedWidth(100)
+        self.btn_model.setToolTip("모델 갤러리 열기")
+        self.btn_model.clicked.connect(self._open_model_gallery)
+        cl.addWidget(self.btn_model)
+
+        # ── mode 콤보박스 ────────────────────────────────────────────────
         self.mode_combo = QComboBox()
         self.mode_combo.addItems([
             "추론 모드 (Standard Inference)",
@@ -131,14 +170,39 @@ class DashUI(QWidget):
         self.api_key_input = QLineEdit()
         self.api_key_input.setPlaceholderText("LLM Judge API Key")
         self.api_key_input.setEchoMode(QLineEdit.Password)
-        self.api_key_input.setFixedWidth(160)
+        self.api_key_input.setFixedWidth(150)
         cl.addWidget(self.api_key_input)
 
+        # ── 채팅 토글 버튼 ───────────────────────────────────────────────
+        self.btn_chat = QPushButton("🗨️ 대화형 벤치마크")
+        self.btn_chat.setObjectName("ChatToggleBtn")
+        self.btn_chat.setCheckable(True)
+        self.btn_chat.setFixedWidth(130)
+        self.btn_chat.setToolTip("채팅 벤치마크 패널 열기/닫기")
+        self.btn_chat.clicked.connect(self._toggle_chat)
+        self.btn_chat.setStyleSheet(
+            "QPushButton#ChatToggleBtn { background-color: #1e293b;"
+            " border: 1px solid #334155; border-radius: 6px; color: #94a3b8;"
+            " font-weight: 600; font-size: 11px; }"
+            "QPushButton#ChatToggleBtn:checked { background-color: #1d4ed8;"
+            " border: 1px solid #3b82f6; color: white; }"
+            "QPushButton#ChatToggleBtn:hover { border-color: #3b82f6; }"
+        )
+        cl.addWidget(self.btn_chat)
+
+        # ── RUN 버튼 ─────────────────────────────────────────────────────
         self.btn_run = QPushButton("⚡  RUN")
         self.btn_run.setObjectName("RunButton")
         self.btn_run.setFixedWidth(90)
         self.btn_run.clicked.connect(self.run_benchmark_signal.emit)
         cl.addWidget(self.btn_run)
+
+        # ── 보고서 버튼 ──────────────────────────────────────────────────
+        self.btn_report = QPushButton("📊 보고서")
+        self.btn_report.setFixedWidth(84)
+        self.btn_report.setToolTip("벤치마크 결과 CSV 뷰어")
+        self.btn_report.clicked.connect(self._open_report)
+        cl.addWidget(self.btn_report)
 
         self.btn_chaos = QPushButton("🔥")
         self.btn_chaos.setFixedWidth(38)
@@ -167,7 +231,7 @@ class DashUI(QWidget):
 
         return card
 
-    # ── Telemetry bar ─────────────────────────────────────────────────
+    # ── Telemetry bar ────────────────────────────────────────────────────
 
     def _build_telemetry_bar(self) -> QHBoxLayout:
         row = QHBoxLayout()
@@ -196,52 +260,48 @@ class DashUI(QWidget):
 
         return row
 
-    # ── Graph section ─────────────────────────────────────────────────
+    # ── Graph section ────────────────────────────────────────────────────
 
     def _build_graphs(self) -> QHBoxLayout:
         row = QHBoxLayout()
         row.setSpacing(8)
 
-        # CPU
         self.cpu_plot = pg.PlotWidget(title="CPU Load (%)")
         self.cpu_plot.setYRange(0, 100)
         self.cpu_plot.showGrid(x=True, y=True, alpha=0.5)
         self.cpu_plot.getAxis('left').setTicks([[(i, str(i)) for i in range(0, 101, 5)]])
-        self.cpu_curve = self.cpu_plot.plot(pen=pg.mkPen('#3b82f6', width=2))
+        self.cpu_curve    = self.cpu_plot.plot(pen=pg.mkPen('#3b82f6', width=2))
         self.cpu_ma_curve = self.cpu_plot.plot(pen=pg.mkPen('#93c5fd', width=1, style=Qt.DashLine))
-        self.cpu_hover = pg.TextItem('', anchor=(0, 1), color='#f8fafc')
+        self.cpu_hover    = pg.TextItem('', anchor=(0, 1), color='#f8fafc')
         self.cpu_plot.addItem(self.cpu_hover, ignoreBounds=True)
         self._configure_plot(self.cpu_plot)
         row.addWidget(self.cpu_plot)
 
-        # RAM
         self.ram_plot = pg.PlotWidget(title="RAM Usage (%)")
         self.ram_plot.setYRange(0, 100)
         self.ram_plot.showGrid(x=True, y=True, alpha=0.5)
         self.ram_plot.getAxis('left').setTicks([[(i, str(i)) for i in range(0, 101, 5)]])
-        self.ram_curve = self.ram_plot.plot(pen=pg.mkPen('#10b981', width=2))
+        self.ram_curve    = self.ram_plot.plot(pen=pg.mkPen('#10b981', width=2))
         self.ram_ma_curve = self.ram_plot.plot(pen=pg.mkPen('#6ee7b7', width=1, style=Qt.DashLine))
-        self.ram_hover = pg.TextItem('', anchor=(0, 1), color='#f8fafc')
+        self.ram_hover    = pg.TextItem('', anchor=(0, 1), color='#f8fafc')
         self.ram_plot.addItem(self.ram_hover, ignoreBounds=True)
         self._configure_plot(self.ram_plot)
         row.addWidget(self.ram_plot)
 
-        # GPU (조건부)
         if self.specs.has_nvidia:
             self.gpu_plot = pg.PlotWidget(title="GPU (%)")
             self.gpu_plot.setYRange(0, 100)
-            self.gpu_curve = self.gpu_plot.plot(pen=pg.mkPen('#f59e0b', width=2))
+            self.gpu_curve    = self.gpu_plot.plot(pen=pg.mkPen('#f59e0b', width=2))
             self.gpu_ma_curve = self.gpu_plot.plot(pen=pg.mkPen('#fde68a', width=1, style=Qt.DashLine))
-            self.gpu_hover = pg.TextItem('', anchor=(0, 1), color='#f8fafc')
+            self.gpu_hover    = pg.TextItem('', anchor=(0, 1), color='#f8fafc')
             self.gpu_plot.addItem(self.gpu_hover, ignoreBounds=True)
             self._configure_plot(self.gpu_plot)
             row.addWidget(self.gpu_plot)
 
-        # Token Usage
         self.tok_plot = pg.PlotWidget(title="Token Usage (cumulative)")
-        self.tok_curve = self.tok_plot.plot(pen=pg.mkPen('#a855f7', width=2))
+        self.tok_curve    = self.tok_plot.plot(pen=pg.mkPen('#a855f7', width=2))
         self.tok_ma_curve = self.tok_plot.plot(pen=pg.mkPen('#c084fc', width=1, style=Qt.DashLine))
-        self.tok_hover = pg.TextItem('', anchor=(0, 1), color='#f8fafc')
+        self.tok_hover    = pg.TextItem('', anchor=(0, 1), color='#f8fafc')
         self.tok_plot.addItem(self.tok_hover, ignoreBounds=True)
         self._configure_plot(self.tok_plot)
         row.addWidget(self.tok_plot)
@@ -254,7 +314,7 @@ class DashUI(QWidget):
         view = plot.getViewBox()
         view.setMouseMode(pg.ViewBox.PanMode)
         view.sigRangeChanged.connect(self._on_view_range_changed)
-        plot.scene().sigMouseMoved.connect(lambda pos, plot=plot: self._on_plot_hover(pos, plot))
+        plot.scene().sigMouseMoved.connect(lambda pos, p=plot: self._on_plot_hover(pos, p))
 
     def _moving_average(self, data, window=10):
         if not data or window <= 1:
@@ -271,7 +331,7 @@ class DashUI(QWidget):
                 ma.append(round(acc / window, 2))
         return ma
 
-    def _set_plot_xrange(self, plot: pg.PlotWidget, xmin: float, xmax: float):
+    def _set_plot_xrange(self, plot, xmin, xmax):
         self._suppress_range_change = True
         plot.getViewBox().setXRange(xmin, xmax, padding=0)
         self._suppress_range_change = False
@@ -281,7 +341,7 @@ class DashUI(QWidget):
             return
         self._user_panned = True
 
-    def _on_plot_hover(self, scene_pos, plot: pg.PlotWidget):
+    def _on_plot_hover(self, scene_pos, plot):
         if not plot.sceneBoundingRect().contains(scene_pos):
             return
         view_pos = plot.getViewBox().mapSceneToView(scene_pos)
@@ -299,10 +359,6 @@ class DashUI(QWidget):
         else:
             return
 
-        if not plot.sceneBoundingRect().contains(scene_pos):
-            hover_item.hide()
-            return
-
         if not x_data or not y_data:
             hover_item.hide()
             return
@@ -317,42 +373,32 @@ class DashUI(QWidget):
         hover_item.setPos(x_data[index], y_data[index])
         hover_item.show()
 
-    # ── Console tabs ──────────────────────────────────────────────────
+    # ── Console tabs ─────────────────────────────────────────────────────
 
     def _build_console_tabs(self) -> QTabWidget:
         self.tabs = QTabWidget()
 
-        # Analytics tab
         self.console = QTextEdit()
         self.console.setReadOnly(True)
-        analytics_widget = self._wrap_console(
-            self.console, "📊  ANALYTICS & INSIGHTS"
-        )
+        analytics_widget = self._wrap_console(self.console, "📊  ANALYTICS & INSIGHTS")
         self.tabs.addTab(analytics_widget, "📊  ANALYTICS")
 
-        # Kernel telemetry tab
         self.sys_console = QTextEdit()
         self.sys_console.setReadOnly(True)
-        kernel_widget = self._wrap_console(
-            self.sys_console, "⚙️  KERNEL TELEMETRY"
-        )
+        kernel_widget = self._wrap_console(self.sys_console, "⚙️  KERNEL TELEMETRY")
         self.tabs.addTab(kernel_widget, "⚙️  KERNEL TELEMETRY")
 
         return self.tabs
 
     def _wrap_console(self, console: QTextEdit, title: str) -> QWidget:
-        """QTextEdit 를 헤더(확장 버튼 포함) + 본문으로 감쌉니다."""
         wrapper = QWidget()
         vl = QVBoxLayout(wrapper)
         vl.setContentsMargins(0, 0, 0, 0)
         vl.setSpacing(0)
 
-        # 미니 헤더
         hdr = QWidget()
         hdr.setFixedHeight(30)
-        hdr.setStyleSheet(
-            "background-color: #1e293b; border-bottom: 1px solid #334155;"
-        )
+        hdr.setStyleSheet("background-color: #1e293b; border-bottom: 1px solid #334155;")
         hl = QHBoxLayout(hdr)
         hl.setContentsMargins(10, 0, 8, 0)
 
@@ -386,15 +432,40 @@ class DashUI(QWidget):
         vl.addWidget(console)
         return wrapper
 
-    # ──────────────────────────────────────────────────────────────────
+    # ────────────────────────────────────────────────────────────────────────
+    # Chat toggle & model gallery
+    # ────────────────────────────────────────────────────────────────────────
+
+    def _toggle_chat(self):
+        is_opening = self.btn_chat.isChecked()
+        self.chat_panel.toggle()
+        self.btn_run.setEnabled(not is_opening)
+
+    def _open_model_gallery(self):
+        from ui.model_gallery import ModelGalleryDialog
+        dlg = ModelGalleryDialog(current_model=self._active_model, parent=self)
+        dlg.model_selected.connect(self.set_active_model)
+        dlg.exec()
+
+    def _open_report(self):
+        from ui.data_table_dialog import open_report_viewer
+        open_report_viewer("Edge_v5_Singularity_Report.csv", parent=self)
+
+    # ────────────────────────────────────────────────────────────────────────
     # Public API
-    # ──────────────────────────────────────────────────────────────────
+    # ────────────────────────────────────────────────────────────────────────
+
+    def set_active_model(self, name: str):
+        self._active_model = name
+        self._lbl_active_model.setText(f"모델: {name}")
+        self.show_toast(f"✅ 모델 변경됨: {name}")
+
+    def get_active_model(self) -> str:
+        return self._active_model
 
     def clear_logs(self):
-        """화면 전환 전 로그 초기화 + 텔레메트리 데이터 리셋."""
         self.console.clear()
         self.sys_console.clear()
-        # 텔레메트리 버퍼 리셋
         self.cpu_data  = []
         self.ram_data  = []
         self.gpu_data  = []
@@ -417,7 +488,6 @@ class DashUI(QWidget):
             self.gpu_ma_curve.setData([])
         self.lbl_engine_info.setText("MATRIX STATUS: INITIALIZING...")
         self.lbl_ram_usage.setText("RAM Usage: 0%")
-        # 오버레이가 열려 있으면 닫기
         self._overlay.close_overlay()
 
     def show_toast(self, message: str, duration_ms: int = 3200):
@@ -438,12 +508,10 @@ class DashUI(QWidget):
         self.toast_label.setGeometry(
             self.width() - w - margin,
             self.height() - h - margin,
-            w,
-            h
+            w, h
         )
 
     def focus_log_tab(self):
-        """커널 텔레메트리 탭을 활성화합니다 (인덱스 1)."""
         self.tabs.setCurrentIndex(1)
 
     def update_engine_status(self, text: str):
@@ -486,14 +554,14 @@ class DashUI(QWidget):
             limit = mem.get('limit', 0)
             if limit > 0:
                 mem_pct = usage / limit * 100
-            used_mb = usage / 1024 / 1024
+            used_mb  = usage / 1024 / 1024
             limit_mb = limit / 1024 / 1024
 
             cpu_stats = stats.get('cpu_stats', {})
-            precpu = stats.get('precpu_stats', {})
-            cpu_delta = cpu_stats.get('cpu_usage', {}).get('total_usage', 0) - precpu.get('cpu_usage', {}).get('total_usage', 0)
+            precpu    = stats.get('precpu_stats', {})
+            cpu_delta    = cpu_stats.get('cpu_usage', {}).get('total_usage', 0) - precpu.get('cpu_usage', {}).get('total_usage', 0)
             system_delta = cpu_stats.get('system_cpu_usage', 0) - precpu.get('system_cpu_usage', 0)
-            online_cpus = cpu_stats.get('online_cpus') or len(cpu_stats.get('cpu_usage', {}).get('percpu_usage', []) or [1])
+            online_cpus  = cpu_stats.get('online_cpus') or len(cpu_stats.get('cpu_usage', {}).get('percpu_usage', []) or [1])
             if system_delta > 0 and cpu_delta > 0:
                 cpu_pct = (cpu_delta / system_delta) * online_cpus * 100.0
         except Exception:
@@ -501,16 +569,13 @@ class DashUI(QWidget):
         return cpu_pct, mem_pct, used_mb, limit_mb
 
     def update_token_count(self, delta: int):
-        """실행 엔진으로부터 토큰 증분을 수신합니다."""
         self._tok_cum += delta
         self.tok_x.append(len(self.tok_x))
         self.tok_data.append(self._tok_cum)
         self._update_plot_data(
-            plot=self.tok_plot,
-            curve=self.tok_curve,
+            plot=self.tok_plot, curve=self.tok_curve,
             ma_curve=self.tok_ma_curve,
-            x_data=self.tok_x,
-            y_data=self.tok_data
+            x_data=self.tok_x, y_data=self.tok_data
         )
 
     def _update_plot_data(self, plot, curve, ma_curve, x_data, y_data):
@@ -520,7 +585,6 @@ class DashUI(QWidget):
             ma_curve.setData(x_data[-len(ma):], ma)
         else:
             ma_curve.setData([], [])
-
         if not self._user_panned and x_data:
             self._set_plot_xrange(plot, max(0, x_data[-1] - self._HISTORY), x_data[-1])
 
@@ -539,8 +603,8 @@ class DashUI(QWidget):
             )
 
     def apply_theme_to_graphs(self, is_dark: bool):
-        bg = '#020617' if is_dark else '#ffffff'
-        fg = '#94a3b8' if is_dark else '#475569'
+        bg    = '#020617' if is_dark else '#ffffff'
+        fg    = '#94a3b8' if is_dark else '#475569'
         alpha = 0.08 if is_dark else 0.15
 
         plots = [self.cpu_plot, self.ram_plot, self.tok_plot]
@@ -563,16 +627,12 @@ class DashUI(QWidget):
         self.sys_console.setStyleSheet(console_style)
 
     def update_telemetry(self, cpu, mem_u, mem_l, bat_pct, gpu=None):
-        """외부 호출 버전 (기존 호환성 유지)."""
         self.bar_battery.setValue(int(bat_pct))
         self.lbl_battery.setText(f"Reliability: {bat_pct:.1f}%")
 
-    # ──────────────────────────────────────────────────────────────────
-    # 0.1s Telemetry Polling
-    # ──────────────────────────────────────────────────────────────────
+    # ── 0.1s Telemetry Polling ───────────────────────────────────────────
 
     def _poll_telemetry(self):
-        """QTimer 100ms 마다 CPU/RAM을 측정합니다."""
         cpu = psutil.cpu_percent(interval=None)
         ram_percent = 0.0
         ram_label_text = "RAM Usage: 0%"
@@ -589,7 +649,7 @@ class DashUI(QWidget):
         else:
             mem = psutil.virtual_memory()
             ram_percent = mem.percent
-            used_mb = mem.used / 1024 / 1024
+            used_mb  = mem.used / 1024 / 1024
             total_mb = mem.total / 1024 / 1024
             ram_label_text = f"RAM Usage: {ram_percent:.1f}% ({used_mb:.0f}/{total_mb:.0f}MB)"
 
@@ -602,18 +662,14 @@ class DashUI(QWidget):
         self.ram_data.append(ram_percent)
 
         self._update_plot_data(
-            plot=self.cpu_plot,
-            curve=self.cpu_curve,
+            plot=self.cpu_plot, curve=self.cpu_curve,
             ma_curve=self.cpu_ma_curve,
-            x_data=self.cpu_x,
-            y_data=self.cpu_data
+            x_data=self.cpu_x, y_data=self.cpu_data
         )
         self._update_plot_data(
-            plot=self.ram_plot,
-            curve=self.ram_curve,
+            plot=self.ram_plot, curve=self.ram_curve,
             ma_curve=self.ram_ma_curve,
-            x_data=self.ram_x,
-            y_data=self.ram_data
+            x_data=self.ram_x, y_data=self.ram_data
         )
 
         if self.specs.has_nvidia:
@@ -630,18 +686,14 @@ class DashUI(QWidget):
                 self.gpu_x.append(self._telemetry_index)
                 self.gpu_data.append(gpu_pct)
                 self._update_plot_data(
-                    plot=self.gpu_plot,
-                    curve=self.gpu_curve,
+                    plot=self.gpu_plot, curve=self.gpu_curve,
                     ma_curve=self.gpu_ma_curve,
-                    x_data=self.gpu_x,
-                    y_data=self.gpu_data
+                    x_data=self.gpu_x, y_data=self.gpu_data
                 )
             except Exception:
                 pass
 
-    # ──────────────────────────────────────────────────────────────────
-    # Slots
-    # ──────────────────────────────────────────────────────────────────
+    # ── Slots ────────────────────────────────────────────────────────────
 
     def _on_shutdown_clicked(self):
         self.shutdown_signal.emit()
