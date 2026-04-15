@@ -17,7 +17,7 @@ class MatrixEngine:
 
     def _log(self, msg: str):
         if self.log_callback:
-            self.log_callback(msg)
+            self.log_callback(msg) 
 
     def cleanup_old_arena(self):
         """기존 컨테이너를 정리합니다."""
