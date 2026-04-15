@@ -34,7 +34,14 @@ class DashUI(QWidget):
         self.ram_data  = []
         self.gpu_data  = []
         self.tok_data  = []
+        self.cpu_x     = []
+        self.ram_x     = []
+        self.gpu_x     = []
+        self.tok_x     = []
         self._tok_cum  = 0                         # 누적 토큰 카운터
+        self._telemetry_index = 0
+        self._user_panned = False
+        self._suppress_range_change = False
 
         # 로그 스트리밍 모드
         self.is_streaming_enabled = False
@@ -201,6 +208,10 @@ class DashUI(QWidget):
         self.cpu_plot.showGrid(x=True, y=True, alpha=0.5)
         self.cpu_plot.getAxis('left').setTicks([[(i, str(i)) for i in range(0, 101, 5)]])
         self.cpu_curve = self.cpu_plot.plot(pen=pg.mkPen('#3b82f6', width=2))
+        self.cpu_ma_curve = self.cpu_plot.plot(pen=pg.mkPen('#93c5fd', width=1, style=Qt.DashLine))
+        self.cpu_hover = pg.TextItem('', anchor=(0, 1), color='#f8fafc')
+        self.cpu_plot.addItem(self.cpu_hover, ignoreBounds=True)
+        self._configure_plot(self.cpu_plot)
         row.addWidget(self.cpu_plot)
 
         # RAM
@@ -209,6 +220,10 @@ class DashUI(QWidget):
         self.ram_plot.showGrid(x=True, y=True, alpha=0.5)
         self.ram_plot.getAxis('left').setTicks([[(i, str(i)) for i in range(0, 101, 5)]])
         self.ram_curve = self.ram_plot.plot(pen=pg.mkPen('#10b981', width=2))
+        self.ram_ma_curve = self.ram_plot.plot(pen=pg.mkPen('#6ee7b7', width=1, style=Qt.DashLine))
+        self.ram_hover = pg.TextItem('', anchor=(0, 1), color='#f8fafc')
+        self.ram_plot.addItem(self.ram_hover, ignoreBounds=True)
+        self._configure_plot(self.ram_plot)
         row.addWidget(self.ram_plot)
 
         # GPU (조건부)
@@ -216,14 +231,91 @@ class DashUI(QWidget):
             self.gpu_plot = pg.PlotWidget(title="GPU (%)")
             self.gpu_plot.setYRange(0, 100)
             self.gpu_curve = self.gpu_plot.plot(pen=pg.mkPen('#f59e0b', width=2))
+            self.gpu_ma_curve = self.gpu_plot.plot(pen=pg.mkPen('#fde68a', width=1, style=Qt.DashLine))
+            self.gpu_hover = pg.TextItem('', anchor=(0, 1), color='#f8fafc')
+            self.gpu_plot.addItem(self.gpu_hover, ignoreBounds=True)
+            self._configure_plot(self.gpu_plot)
             row.addWidget(self.gpu_plot)
 
         # Token Usage
         self.tok_plot = pg.PlotWidget(title="Token Usage (cumulative)")
         self.tok_curve = self.tok_plot.plot(pen=pg.mkPen('#a855f7', width=2))
+        self.tok_ma_curve = self.tok_plot.plot(pen=pg.mkPen('#c084fc', width=1, style=Qt.DashLine))
+        self.tok_hover = pg.TextItem('', anchor=(0, 1), color='#f8fafc')
+        self.tok_plot.addItem(self.tok_hover, ignoreBounds=True)
+        self._configure_plot(self.tok_plot)
         row.addWidget(self.tok_plot)
 
         return row
+
+    def _configure_plot(self, plot: pg.PlotWidget):
+        plot.setMouseEnabled(x=True, y=True)
+        plot.setMenuEnabled(False)
+        view = plot.getViewBox()
+        view.setMouseMode(pg.ViewBox.PanMode)
+        view.sigRangeChanged.connect(self._on_view_range_changed)
+        plot.scene().sigMouseMoved.connect(lambda pos, plot=plot: self._on_plot_hover(pos, plot))
+
+    def _moving_average(self, data, window=10):
+        if not data or window <= 1:
+            return []
+        if len(data) < window:
+            window = len(data)
+        ma = []
+        acc = 0.0
+        for i, value in enumerate(data):
+            acc += value
+            if i >= window:
+                acc -= data[i - window]
+            if i >= window - 1:
+                ma.append(round(acc / window, 2))
+        return ma
+
+    def _set_plot_xrange(self, plot: pg.PlotWidget, xmin: float, xmax: float):
+        self._suppress_range_change = True
+        plot.getViewBox().setXRange(xmin, xmax, padding=0)
+        self._suppress_range_change = False
+
+    def _on_view_range_changed(self, view_box, ranges):
+        if self._suppress_range_change:
+            return
+        self._user_panned = True
+
+    def _on_plot_hover(self, scene_pos, plot: pg.PlotWidget):
+        if not plot.sceneBoundingRect().contains(scene_pos):
+            return
+        view_pos = plot.getViewBox().mapSceneToView(scene_pos)
+        if view_pos is None:
+            return
+
+        if plot is self.cpu_plot:
+            x_data, y_data, hover_item = self.cpu_x, self.cpu_data, self.cpu_hover
+        elif plot is self.ram_plot:
+            x_data, y_data, hover_item = self.ram_x, self.ram_data, self.ram_hover
+        elif plot is getattr(self, 'gpu_plot', None):
+            x_data, y_data, hover_item = self.gpu_x, self.gpu_data, self.gpu_hover
+        elif plot is self.tok_plot:
+            x_data, y_data, hover_item = self.tok_x, self.tok_data, self.tok_hover
+        else:
+            return
+
+        if not plot.sceneBoundingRect().contains(scene_pos):
+            hover_item.hide()
+            return
+
+        if not x_data or not y_data:
+            hover_item.hide()
+            return
+
+        index = int(round(view_pos.x()))
+        if index < 0 or index >= len(x_data):
+            hover_item.hide()
+            return
+
+        value = y_data[index]
+        hover_item.setText(f"{plot.titleLabel.text()}\nIndex: {index}\nValue: {value:.2f}")
+        hover_item.setPos(x_data[index], y_data[index])
+        hover_item.show()
 
     # ── Console tabs ──────────────────────────────────────────────────
 
@@ -307,7 +399,22 @@ class DashUI(QWidget):
         self.ram_data  = []
         self.gpu_data  = []
         self.tok_data  = []
+        self.cpu_x     = []
+        self.ram_x     = []
+        self.gpu_x     = []
+        self.tok_x     = []
         self._tok_cum  = 0
+        self._telemetry_index = 0
+        self._user_panned = False
+        self.cpu_curve.setData([])
+        self.cpu_ma_curve.setData([])
+        self.ram_curve.setData([])
+        self.ram_ma_curve.setData([])
+        self.tok_curve.setData([])
+        self.tok_ma_curve.setData([])
+        if self.specs.has_nvidia:
+            self.gpu_curve.setData([])
+            self.gpu_ma_curve.setData([])
         self.lbl_engine_info.setText("MATRIX STATUS: INITIALIZING...")
         self.lbl_ram_usage.setText("RAM Usage: 0%")
         # 오버레이가 열려 있으면 닫기
@@ -396,8 +503,26 @@ class DashUI(QWidget):
     def update_token_count(self, delta: int):
         """실행 엔진으로부터 토큰 증분을 수신합니다."""
         self._tok_cum += delta
+        self.tok_x.append(len(self.tok_x))
         self.tok_data.append(self._tok_cum)
-        self.tok_curve.setData(self.tok_data)
+        self._update_plot_data(
+            plot=self.tok_plot,
+            curve=self.tok_curve,
+            ma_curve=self.tok_ma_curve,
+            x_data=self.tok_x,
+            y_data=self.tok_data
+        )
+
+    def _update_plot_data(self, plot, curve, ma_curve, x_data, y_data):
+        curve.setData(x_data, y_data)
+        ma = self._moving_average(y_data, window=10)
+        if ma:
+            ma_curve.setData(x_data[-len(ma):], ma)
+        else:
+            ma_curve.setData([], [])
+
+        if not self._user_panned and x_data:
+            self._set_plot_xrange(plot, max(0, x_data[-1] - self._HISTORY), x_data[-1])
 
     def log_bench(self, text: str):
         self.console.append(text)
@@ -470,11 +595,26 @@ class DashUI(QWidget):
 
         self.lbl_ram_usage.setText(ram_label_text)
 
+        self._telemetry_index += 1
+        self.cpu_x.append(self._telemetry_index)
+        self.ram_x.append(self._telemetry_index)
         self.cpu_data.append(cpu)
         self.ram_data.append(ram_percent)
 
-        self.cpu_curve.setData(self.cpu_data)
-        self.ram_curve.setData(self.ram_data)
+        self._update_plot_data(
+            plot=self.cpu_plot,
+            curve=self.cpu_curve,
+            ma_curve=self.cpu_ma_curve,
+            x_data=self.cpu_x,
+            y_data=self.cpu_data
+        )
+        self._update_plot_data(
+            plot=self.ram_plot,
+            curve=self.ram_curve,
+            ma_curve=self.ram_ma_curve,
+            x_data=self.ram_x,
+            y_data=self.ram_data
+        )
 
         if self.specs.has_nvidia:
             try:
@@ -487,8 +627,15 @@ class DashUI(QWidget):
                 )
                 out, _ = proc.communicate(timeout=0.05)
                 gpu_pct = float(out.strip().split('\n')[0])
+                self.gpu_x.append(self._telemetry_index)
                 self.gpu_data.append(gpu_pct)
-                self.gpu_curve.setData(self.gpu_data)
+                self._update_plot_data(
+                    plot=self.gpu_plot,
+                    curve=self.gpu_curve,
+                    ma_curve=self.gpu_ma_curve,
+                    x_data=self.gpu_x,
+                    y_data=self.gpu_data
+                )
             except Exception:
                 pass
 

@@ -8,6 +8,7 @@ class ReportManager:
     
     SCHEMA = [
         "Timestamp", "Model_Hash", "Quant_Method", "Context_Size", "Thread_Config", 
+        "Prompt_Text", "Prompt_Response",
         "TTFT (ms)", "Prompt_Eval (ms/t)", "Avg_GPU_W", "Tokens_per_Joule", 
         "E2E_Latency", "Generation (t/s)", "Peak_VRAM_MB", "System_Load", 
         "Warm/Cold_Tag", "Sampling_Time (ms)", "Judge_Score", "Metric_Source (bench/srv)"
@@ -22,6 +23,19 @@ class ReportManager:
             with open(self.db_path, 'w', newline='', encoding='utf-8-sig') as f:
                 writer = csv.DictWriter(f, fieldnames=self.SCHEMA)
                 writer.writeheader()
+        else:
+            with open(self.db_path, 'r', encoding='utf-8-sig', newline='') as f:
+                reader = csv.DictReader(f)
+                existing_rows = list(reader)
+                existing_headers = reader.fieldnames or []
+
+            if existing_headers != self.SCHEMA:
+                with open(self.db_path, 'w', newline='', encoding='utf-8-sig') as f:
+                    writer = csv.DictWriter(f, fieldnames=self.SCHEMA)
+                    writer.writeheader()
+                    for row in existing_rows:
+                        merged = {k: row.get(k, 'N/A') for k in self.SCHEMA}
+                        writer.writerow(merged)
 
     def insert_entry(self, data: Dict[str, Any]):
         """Inserts a new benchmark entry into the 'database'."""

@@ -141,13 +141,8 @@ class ExecutionEngine(QThread):
                 "Quant_Method":           "N/A",
                 "Context_Size":           item.get('n_ctx'),
                 "Thread_Config":          item.get('n_threads'),
-                "TTFT (ms)":              0,
-                "Prompt_Eval (ms/t)":     round(item.get('test_time_ms', 0) / max(item.get('n_prompt', 1), 1), 2),
-                "Avg_GPU_W":              round(avg_watts, 2),
-                "Tokens_per_Joule":       round(tps_val / avg_watts, 3) if avg_watts > 0 else 0,
-                "E2E_Latency":            round(e2e, 2),
-                "Generation (t/s)":       tps_val,
-                "Peak_VRAM_MB":           0,
+                    "Prompt_Text":            "N/A",
+                    "Prompt_Response":        "N/A",
                 "System_Load":            "STRESS",
                 "Warm/Cold_Tag":          "STRESS",
                 "Sampling_Time (ms)":     0,
@@ -276,6 +271,10 @@ class ExecutionEngine(QThread):
                 self._log(f"[에러] {e}")
 
             duration = time.time() - start_time
+            if ttft == 0:
+                ttft = duration * 1000
+            if prompt_ms_per_t == 0 and tok_count > 0:
+                prompt_ms_per_t = round(duration / tok_count, 2)
             if "Efficiency" in self.session.run_mode:
                 pw_tracker.stop()
 
@@ -291,6 +290,8 @@ class ExecutionEngine(QThread):
                 "Quant_Method":       "N/A",
                 "Context_Size":       self.session.stress_config.n_ctx,
                 "Thread_Config":      self.session.stress_config.threads,
+                "Prompt_Text":        task.get('prompt', ''),
+                "Prompt_Response":    text_acc,
                 "TTFT (ms)":          round(ttft, 1),
                 "Prompt_Eval (ms/t)": prompt_ms_per_t,
                 "Avg_GPU_W":          round(avg_watts, 2),
