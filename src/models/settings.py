@@ -12,10 +12,17 @@ class BootstrapConfig:
 
 @dataclass
 class StressOptions:
-    """스트레스 테스트를 위한 세부 프로토콜 옵션"""
+    """스트레스 테스트 및 미세 튜닝을 위한 세부 프로토콜 옵션"""
     threads: int = 4
     n_ctx: int = 2048
     iterations: int = 1
+    
+    # [Engineering] 미세 튜닝 파라미터 (Phase 2 추가)
+    temperature: float = 0.1
+    top_k: int = 40
+    top_p: float = 0.95
+    repeat_penalty: float = 1.1
+    system_prompt: str = "You are a professional benchmark assistant. Answer precisely and concisely."
 
 @dataclass
 class BenchmarkSession:

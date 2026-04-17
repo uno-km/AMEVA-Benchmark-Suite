@@ -2,6 +2,7 @@ import time
 import json
 import requests
 import subprocess
+import re
 from datetime import datetime
 from openai import OpenAI
 from PySide6.QtCore import QThread, Signal
@@ -14,28 +15,44 @@ def _ts() -> str:
     return f"[{now.strftime('%H:%M:%S')}.{now.microsecond // 1000:03d}]"
 
 
-class PowerTracker(QThread):
-    """전력 소모(Watts)를 0.2s 주기로 비동기 폴링합니다."""
+import psutil
 
-    def __init__(self):
+class PowerTracker(QThread):
+    """[Engineering] 전력 소모(Watts)를 0.2s 주기로 정밀 폴링 및 추정합니다."""
+
+    def __init__(self, has_nvidia: bool = False):
         super().__init__()
         self.is_running = True
+        self.has_nvidia = has_nvidia
         self.power_history = []
+        self.cpu_count = psutil.cpu_count()
 
     def run(self):
         while self.is_running:
             try:
-                proc = subprocess.Popen(
-                    ["nvidia-smi", "--query-gpu=power.draw",
-                     "--format=csv,noheader,nounits"],
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                    text=True, creationflags=subprocess.CREATE_NO_WINDOW
-                )
-                stdout, _ = proc.communicate()
-                lines = stdout.strip().split('\n')
-                if lines and lines[0]:
-                    watts = float(lines[0])
-                    self.power_history.append(watts)
+                watts = 0.0
+                # 1. GPU 전력 가용 시 우선 수집
+                if self.has_nvidia:
+                    try:
+                        proc = subprocess.Popen(
+                            ["nvidia-smi", "--query-gpu=power.draw",
+                             "--format=csv,noheader,nounits"],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, creationflags=subprocess.CREATE_NO_WINDOW
+                        )
+                        stdout, _ = proc.communicate(timeout=0.1)
+                        lines = stdout.strip().split('\n')
+                        if lines and lines[0]:
+                            watts += float(lines[0])
+                    except:
+                        pass
+                
+                # 2. CPU 전력 추정 (가상 디바이스 프로필 기반: Load% * TDP_base)
+                # TDP 65W급 CPU 기준 추정 모델: idle(5W) + (load% * 0.6)
+                cpu_p = psutil.cpu_percent()
+                watts += 5.0 + (cpu_p * 0.6) 
+
+                self.power_history.append(watts)
             except Exception:
                 pass
             time.sleep(0.2)
@@ -51,12 +68,12 @@ class PowerTracker(QThread):
 
 
 class ExecutionEngine(QThread):
-    """[V5.5] 벤치마크 실행 엔진 – 추론 / 스트레스 테스트를 담당합니다."""
+    """[Engineering] 벤치마크 실행 엔진 – 정밀 데이터 수집 및 가상 환경 최적화."""
 
-    log_signal     = Signal(str)   # Analytics 탭 로그
-    sys_log_signal = Signal(str)   # Kernel Telemetry 탭 로그 (엔진 원시 출력)
-    token_signal   = Signal(int)   # 누적 토큰 증분 (+N)
-    report_signal  = Signal(list)  # 최종 결과 리스트
+    log_signal     = Signal(str)   # UI Analytics
+    sys_log_signal = Signal(str)   # Kernel Telemetry
+    token_signal   = Signal(int)   # Token cumulative
+    report_signal  = Signal(list)  # Data verification report
 
     def __init__(self, session: BenchmarkSession, dataset: list, engine_core):
         super().__init__()
@@ -201,6 +218,12 @@ class ExecutionEngine(QThread):
             url = "http://127.0.0.1:8080/completion"
             self._slog(f"LLAMA.CPP 엔드포인트: {url}")
 
+        has_nv = self.engine_core.container is not None # 컨테이너가 있고 nvida-smi 가능 시 True
+        # 실제 HardwareService 기반 감지로 보강
+        from models.hardware import HardwareService
+        specs = HardwareService.detect_capabilities()
+        has_nv = specs.has_nvidia
+
         for idx, task in enumerate(self.dataset):
             if self.isInterruptionRequested():
                 self._slog("[INFO] 벤치마크 취소 요청 수신.")
@@ -208,7 +231,7 @@ class ExecutionEngine(QThread):
 
             self._slog(f"─── Task [{idx+1}/{len(self.dataset)}]: {task.get('task','?')} ───")
 
-            pw_tracker = PowerTracker()
+            pw_tracker = PowerTracker(has_nvidia=has_nv)
             if "Efficiency" in self.session.run_mode:
                 pw_tracker.start()
 
@@ -218,78 +241,109 @@ class ExecutionEngine(QThread):
             prompt_ms_per_t = 0
             sample_ms = 0
             tok_count = 0
+            repeat_count = 0
+            last_token = ""
 
-            payload = {
-                "model":   model_name,
-                "prompt":  task.get('prompt', ''),
-                "stream":  True,
-                "options": {"num_thread": self.session.stress_config.threads}
-            }
-            if engine_type == "ENG":
+            # 사용자의 원래 질문
+            raw_prompt = task.get('prompt', '')
+
+            # 1. [페이로드 튜닝] Qwen 0.5B의 창의성을 거세하고 팩트 기계로 만듭니다.
+            sample_ms = 0
+
+            # 1. 페이로드 준비 (ChatML 적용 및 동적 튜닝 피드백)
+            raw_prompt = task.get('prompt', 'Hello')
+            sc = self.session.stress_config
+            formatted_prompt = format_chatml(raw_prompt, sc.system_prompt)
+            stop_tokens = get_stop_tokens(engine_type)
+
+            if engine_type == "OLM":
                 payload = {
-                    "prompt": task.get('prompt', ''),
-                    "stream": True, "n_predict": 512
+                    "model": model_name,
+                    "prompt": formatted_prompt,
+                    "stream": True,
+                    "options": {
+                        "num_predict": 200,
+                        "temperature": sc.temperature,
+                        "top_k": sc.top_k,
+                        "top_p": sc.top_p,
+                        "repeat_penalty": sc.repeat_penalty,
+                        "stop": stop_tokens
+                    }
+                }
+            else:
+                payload = {
+                    "prompt": formatted_prompt,
+                    "stream": True,
+                    "n_predict": 200,
+                    "temperature": sc.temperature,
+                    "top_k": sc.top_k,
+                    "top_p": sc.top_p,
+                    "repeat_penalty": sc.repeat_penalty,
+                    "stop": stop_tokens
                 }
 
+            # 2. [스트림 통신부] 정교한 바이트 단위 SSE 파서 구현 (한글 깨짐 방지)
             try:
-                if engine_type == "ENG":
-                    resp = self._post_stream_with_fallback(url, payload, engine_type)
-                    for raw_line in resp.iter_lines(decode_unicode=True):
-                        if self.isInterruptionRequested():
-                            self._slog("[INFO] 벤치마크 취소 요청 수신.")
-                            break
-                        if not raw_line:
-                            continue
-                        decoded = raw_line.strip()
-                        if not decoded.startswith("data: "):
-                            continue
-                        decoded = decoded[6:]
-                        if decoded == "[DONE]":
-                            break
-
-                        data = json.loads(decoded)
-                        if ttft == 0:
-                            ttft = (time.time() - start_time) * 1000
-
-                        token = data.get('content', '')
-                        text_acc += token
-                        tok_count += len(data.get('tokens', [])) or len(token.split())
-                        self._slog(f"[CPP] token: {repr(token)}")
-                        self.token_signal.emit(1)
-
-                        if data.get('stop'):
-                            t_info = data.get('timings', {})
-                            pn = t_info.get('prompt_n', 0)
-                            pm = t_info.get('prompt_ms', 0)
-                            prompt_ms_per_t = round(pm / pn, 2) if pn > 0 else 0
-                            sample_ms = t_info.get('predicted_ms', 0)
-                            break
-                else:
-                    resp = self._post_stream_with_fallback(url, payload, engine_type)
-                    for raw_line in resp.iter_lines(decode_unicode=True):
-                        if self.isInterruptionRequested():
-                            self._slog("[INFO] 벤치마크 취소 요청 수신.")
-                            break
-                        if not raw_line:
-                            continue
-                        decoded = raw_line.strip()
-                        data = json.loads(decoded)
-
-                        if ttft == 0:
-                            ttft = (time.time() - start_time) * 1000
-
-                        if engine_type == "OLM":
-                            token = data.get('response', '')
-                            text_acc += token
-                            tok_count += 1
-                            # 실시간 엔진 로그
-                            self._slog(f"[OLM] token: {repr(token)}")
-                            self.token_signal.emit(1)
-                            if data.get('done'):
+                resp = requests.post(url, json=payload, stream=True, timeout=30)
+                resp.raise_for_status()
+                
+                buffer = b""
+                # SSE 규격상 하나의 이벤트는 \n\n 으로 끝납니다.
+                for chunk in resp.iter_content(chunk_size=1024):
+                    if self.isInterruptionRequested():
+                        break
+                    if not chunk:
+                        continue
+                    
+                    buffer += chunk
+                    
+                    while b"\n\n" in buffer:
+                        event_block, buffer = buffer.split(b"\n\n", 1)
+                        
+                        # 각 라인을 돌며 data: 접두사가 있는지 확인
+                        lines = event_block.decode('utf-8', errors='replace').split('\n')
+                        for line in lines:
+                            line = line.strip()
+                            if not line.startswith("data:"):
+                                continue
+                            
+                            payload_str = line[5:].strip()
+                            if payload_str == "[DONE]":
                                 break
+                            
+                            try:
+                                data = json.loads(payload_str)
+                            except json.JSONDecodeError:
+                                continue
+                            
+                            # 데이터 추출 및 TTFT 측정
+                            if ttft == 0:
+                                ttft = (time.time() - start_time) * 1000
+                            
+                            if engine_type == "OLM":
+                                token = data.get('response', '')
+                            else:
+                                token = data.get('content', '')
+                                
+                            if token:
+                                text_acc += token
+                                tok_count += 1
+                                self.token_signal.emit(1)
+                                
+                            # 종료 조건 체크
+                            if engine_type == "OLM":
+                                if data.get('done'): break
+                            else:
+                                if data.get('stop'):
+                                    t_info = data.get('timings', {})
+                                    prompt_n = t_info.get('prompt_n', 1)
+                                    p_ms = t_info.get('prompt_ms', 0)
+                                    prompt_ms_per_t = round(p_ms / prompt_n, 2) if prompt_n > 0 else 0
+                                    sample_ms = t_info.get('predicted_ms', 0)
+                                    break
 
             except Exception as e:
-                self._slog(f"[에러] 추론 실패: {e}")
+                self._slog(f"[에러] 스트림 통신 실패: {e}")
                 self._log(f"[에러] {e}")
 
             duration = time.time() - start_time
@@ -300,9 +354,20 @@ class ExecutionEngine(QThread):
             if "Efficiency" in self.session.run_mode:
                 pw_tracker.stop()
 
+            # [Engineering] CSV 설정에 따른 자동 채점 분기 처리 (Regex vs LLM Judge)
+            eval_type = task.get('eval_type', 'llm_judge')
+            if eval_type == 'regex':
+                pattern = task.get('expected_regex', '')
+                if pattern and re.search(pattern, text_acc):
+                    score = "PASS (Regex)"
+                else:
+                    score = "FAIL (Regex)"
+            else:
+                score = self._call_llm_judge(task.get('prompt', ''), text_acc)
+
             avg_watts = pw_tracker.get_average_watts()
-            score = self._call_llm_judge(task.get('prompt', ''), text_acc)
             tps_val = round(tok_count / duration, 2) if duration > 0 else 0
+
 
             self._slog(f"Task 완료 | TPS: {tps_val} | TTFT: {ttft:.1f}ms | {avg_watts:.1f}W")
             self._log(f"✓ {task.get('task','?')}  |  Judge: {score}  |  {duration:.2f}s  |  {tps_val} t/s")
@@ -325,7 +390,7 @@ class ExecutionEngine(QThread):
                 "Warm/Cold_Tag":      "WARM",
                 "Sampling_Time (ms)": round(sample_ms, 2),
                 "Judge_Score":        score,
-                "Metric_Source":      "srv"
+                "Metric_Source (bench/srv)": "srv"
             })
 
         self.report_signal.emit(results)

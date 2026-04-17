@@ -156,6 +156,7 @@ class ChatPanel(QWidget):
     """슬라이딩 채팅 사이드바 (QPropertyAnimation 기반)."""
 
     chat_submitted = Signal(str)    # 사용자가 전송한 프롬프트
+    chat_interrupted = Signal()    # 사용자가 중단 버튼 클릭
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -252,8 +253,18 @@ class ChatPanel(QWidget):
         self._send_btn.setFixedSize(38, 38)
         self._send_btn.clicked.connect(self._on_send)
 
+        self._stop_btn = QPushButton("X")
+        self._stop_btn.setObjectName("StopBtn")
+        self._stop_btn.setFixedSize(38, 38)
+        self._stop_btn.setStyleSheet(
+            f"QPushButton#StopBtn {{ background-color: #ef4444; color: white; border-radius: 8px; font-weight: 800; }}"
+        )
+        self._stop_btn.setEnabled(False)
+        self._stop_btn.clicked.connect(self._on_stop)
+
         il.addWidget(self._input, 1)
         il.addWidget(self._send_btn)
+        il.addWidget(self._stop_btn)
 
         root.addWidget(input_frame)
 
@@ -311,7 +322,12 @@ class ChatPanel(QWidget):
         self._waiting = waiting
         self._status_bar.setText(msg if waiting else "")
         self._send_btn.setEnabled(not waiting)
+        self._stop_btn.setEnabled(waiting)
         self._input.setEnabled(not waiting)
+
+    def _on_stop(self):
+        self.chat_interrupted.emit()
+        self.set_waiting(False, "🛑 중단됨")
 
     def _clear_messages(self):
         # stretch 제외하고 모두 삭제

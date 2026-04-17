@@ -132,11 +132,55 @@ class MatrixEngine:
                 self._log(f"[WARN] 로그 스트리밍 중단: {le}")
 
             self._log(f"✓ 커널 온라인. 명령 대기 상태.")
+            
+            # ⚠️ 크리티컬: 모델 로딩 완료 대기 (LLAMA.CPP는 시간이 많이 걸림)
+            self._log("⏳ 서버 준비 상태 확인 중 (최대 60초)...")
+            server_ready = self._wait_for_server_ready(engine_type, deadline_sec=60)
+            if server_ready:
+                self._log("✓ 서버 준비 완료. 추론 가능 상태.")
+            else:
+                self._log("[WARN] 서버 준비 시간초과 (60초) - 재시도 로직 활성화")
+            
             return True, f"[{engine_type}] ONLINE  CPU:{cpu_cores}c  RAM:{ram_mb}MB"
 
         except Exception as e:
             self._log(f"[FATAL] 부팅 실패: {e}")
             return False, str(e)
+
+    def _wait_for_server_ready(self, engine_type: str, deadline_sec: int = 60) -> bool:
+        """[Engineering] 서버가 응답 가능한 상태인지 + 모델 로드가 완료되었는지 실질적으로 확인합니다."""
+        import requests
+        start = time.time()
+        port = 8080 if engine_type == "ENG" else 11434
+        
+        while time.time() - start < deadline_sec:
+            try:
+                # LLAMA.CPP: /health 가 200이어도 모델 로딩 중일 수 있음. 
+                # 가벼운 추론 시도로 확인.
+                if engine_type == "ENG":
+                    resp = requests.post(
+                        f"http://127.0.0.1:{port}/completion",
+                        json={"prompt": " ", "n_predict": 1},
+                        timeout=2
+                    )
+                    if resp.status_code == 200:
+                        return True
+                else:
+                    # OLLAMA: /api/generate 에 모델 전달하여 실제 로드 완료 확인
+                    resp = requests.post(
+                        f"http://127.0.0.1:{port}/api/generate",
+                        json={"model": "qwen2.5:0.5b", "prompt": " ", "stream": False},
+                        timeout=5
+                    )
+                    if resp.status_code == 200:
+                        return True
+            except Exception:
+                pass  # 네트워크 연결 대기 중
+            
+            time.sleep(1.5)
+        
+        return False
+        
 
     def run_llama_bench(self, model_name: str, options: dict) -> dict:
         """지정 모델로 llama-bench를 실행합니다."""

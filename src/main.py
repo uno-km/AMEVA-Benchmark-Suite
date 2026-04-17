@@ -68,7 +68,14 @@ class AMEVAController(QMainWindow):
         self.view_dash.run_benchmark_signal.connect(self.handle_run_request)
         self.view_dash.chaos_monkey_signal.connect(self.engine.inject_chaos)
         self.view_dash.shutdown_signal.connect(self.handle_shutdown)
-        self.view_dash.chat_prompt_signal.connect(self.handle_chat_prompt)
+        self.view_dash.chat_panel.chat_submitted.connect(self.handle_chat_prompt)
+        self.view_dash.chat_panel.chat_interrupted.connect(self._on_chat_interrupted)
+
+    def _on_chat_interrupted(self):
+        if self._chat_runner and self._chat_runner.isRunning():
+            self._chat_runner.requestInterruption()
+            self.view_dash.log_bench("🛑 채팅 벤치마크 중단 요청됨.")
+            self.view_dash.show_toast("채팅 중단됨.")
 
     # ──────────────────────────────────────────────────────────────────────
     # Theme

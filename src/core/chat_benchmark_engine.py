@@ -45,25 +45,42 @@ class ChatBenchmarkEngine(QThread):
         engine_type  = session.boot_config.engine
         model_name   = session.boot_config.model_name
 
-        if engine_type == "OLM":
-            url = "http://127.0.0.1:11434/api/generate"
-        else:
-            url = "http://127.0.0.1:8080/completion"
+        from core.prompt_utils import format_chatml, get_stop_tokens
+        
+        # [Engineering] ChatML 템플릿 적용 (환각 방지 핵심)
+        formatted_prompt = format_chatml(self._prompt, session.stress_config.system_prompt)
+        stop_tokens = get_stop_tokens(engine_type)
 
         self._slog(f"[CHAT_MOD] 채팅 벤치마크 시작 – 모델: {model_name}")
-        self._slog(f"[CHAT_MOD] 프롬프트: {self._prompt[:80]}…")
-
-        payload = {
-            "model":   model_name,
-            "prompt":  self._prompt,
-            "stream":  True,
-            "options": {"num_thread": session.stress_config.threads},
-        }
-        if engine_type == "ENG":
+        
+        # 엔진별 페이로드 구성 (동적 튜닝 파라미터 적용)
+        sc = session.stress_config
+        if engine_type == "OLM":
+            url = "http://127.0.0.1:11434/api/generate"
             payload = {
-                "prompt":    self._prompt,
+                "model":   model_name,
+                "prompt":  formatted_prompt,
+                "stream":  True,
+                "options": {
+                    "num_thread": sc.threads,
+                    "temperature": sc.temperature,
+                    "top_k": sc.top_k,
+                    "top_p": sc.top_p,
+                    "repeat_penalty": sc.repeat_penalty,
+                    "stop": stop_tokens
+                },
+            }
+        else:
+            url = "http://127.0.0.1:8080/completion"
+            payload = {
+                "prompt":    formatted_prompt,
                 "stream":    True,
                 "n_predict": 512,
+                "temperature": sc.temperature,
+                "top_k": sc.top_k,
+                "top_p": sc.top_p,
+                "repeat_penalty": sc.repeat_penalty,
+                "stop": stop_tokens
             }
 
         text_acc         = ""
@@ -73,54 +90,61 @@ class ChatBenchmarkEngine(QThread):
         tok_count        = 0
         start_time       = time.time()
 
+        buffer = b""
         try:
             resp = requests.post(url, json=payload, stream=True, timeout=30)
             resp.raise_for_status()
 
-            for raw_line in resp.iter_lines(decode_unicode=True):
+            for chunk in resp.iter_content(chunk_size=1024):
                 if self.isInterruptionRequested():
                     break
-                if not raw_line:
+                if not chunk:
                     continue
+                
+                buffer += chunk
+                while b"\n\n" in buffer:
+                    event_block, buffer = buffer.split(b"\n\n", 1)
+                    lines = event_block.decode('utf-8', errors='replace').split('\n')
+                    for line in lines:
+                        line = line.strip()
+                        if not line.startswith("data:"):
+                            continue
+                        
+                        payload_str = line[5:].strip()
+                        if payload_str == "[DONE]":
+                            done = True                    
+                            break
+                        
+                        try:
+                            data = json.loads(payload_str)
+                        except json.JSONDecodeError:
+                            continue
+                        
+                        if ttft == 0:
+                            ttft = (time.time() - start_time) * 1000
+                        
+                        if engine_type == "OLM":
+                            token = data.get("response", "")
+                        else:
+                            token = data.get("content", "")
 
-                # ── ENG (llama.cpp SSE) ────────────────────────────────
-                if engine_type == "ENG":
-                    decoded = raw_line.strip()
-                    if not decoded.startswith("data: "):
-                        continue
-                    decoded = decoded[6:]
-                    if decoded == "[DONE]":
-                        break
-                    data = json.loads(decoded)
-                    if ttft == 0:
-                        ttft = (time.time() - start_time) * 1000
-                    token = data.get("content", "")
-                    text_acc += token
-                    tok_count += len(data.get("tokens", [])) or 1
-                    self._slog(f"[CPP] {repr(token)}")
-                    self.chunk_signal.emit(token)
-                    self.token_signal.emit(1)
-                    if data.get("stop"):
-                        t = data.get("timings", {})
-                        pn = t.get("prompt_n", 0)
-                        pm = t.get("prompt_ms", 0)
-                        prompt_ms_per_t = round(pm / pn, 2) if pn > 0 else 0
-                        sample_ms = t.get("predicted_ms", 0)
-                        break
+                        if token:
+                            text_acc += token
+                            tok_count += len(token.encode("utf-8")) // 2  # 근사치
+                            self.chunk_signal.emit(token)
+                            self.token_signal.emit(1)
+                        
+                        if engine_type == "OLM":
+                            if data.get("done"): break
+                        else:
+                            if data.get("stop"):
+                                t = data.get("timings", {})
+                                pn = t.get("prompt_n", 0)
+                                pm = t.get("prompt_ms", 0)
+                                prompt_ms_per_t = round(pm / pn, 2) if pn > 0 else 0
+                                sample_ms = t.get("predicted_ms", 0)
+                                break
 
-                # ── OLM (Ollama) ───────────────────────────────────────
-                else:
-                    data = json.loads(raw_line.strip())
-                    if ttft == 0:
-                        ttft = (time.time() - start_time) * 1000
-                    token = data.get("response", "")
-                    text_acc += token
-                    tok_count += 1
-                    self._slog(f"[OLM] {repr(token)}")
-                    self.chunk_signal.emit(token)
-                    self.token_signal.emit(1)
-                    if data.get("done"):
-                        break
 
         except Exception as e:
             self._slog(f"[CHAT_MOD] 오류: {e}")

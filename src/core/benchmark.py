@@ -1,4 +1,4 @@
-﻿
+
 import datetime
 import time
 import requests

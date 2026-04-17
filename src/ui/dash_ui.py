@@ -190,6 +190,14 @@ class DashUI(QWidget):
         )
         cl.addWidget(self.btn_chat)
 
+        # ── Tuning 버튼 ────────────────────────────────────────────────
+        self.btn_tuning = QPushButton("⚙️ Tuning")
+        self.btn_tuning.setObjectName("TuningBtn")
+        self.btn_tuning.setFixedWidth(80)
+        self.btn_tuning.setToolTip("모델 샘플링 파라미터 미세 조정")
+        self.btn_tuning.clicked.connect(self._open_tuning_dialog)
+        cl.addWidget(self.btn_tuning)
+
         # ── RUN 버튼 ─────────────────────────────────────────────────────
         self.btn_run = QPushButton("⚡  RUN")
         self.btn_run.setObjectName("RunButton")
@@ -206,9 +214,10 @@ class DashUI(QWidget):
 
         self.btn_chaos = QPushButton("🔥")
         self.btn_chaos.setFixedWidth(38)
-        self.btn_chaos.setToolTip("Chaos Monkey – 급격한 부하 주입")
-        self.btn_chaos.setStyleSheet("background-color: #f59e0b; color: #0f172a; border: none;")
-        self.btn_chaos.clicked.connect(self.chaos_monkey_signal.emit)
+        self.btn_chaos.setCheckable(True)  # 토글 가능하게
+        self.btn_chaos.setToolTip("Chaos Monkey – 토글 ON/OFF")
+        self.btn_chaos.setStyleSheet("background-color: #f59e0b; color: #0f172a; border: none; border-radius: 4px;")
+        self.btn_chaos.clicked.connect(self._on_chaos_toggle)  # 직접 신호 대신 함수 호출
         cl.addWidget(self.btn_chaos)
 
         self.btn_harness = QPushButton("📋 HARNESS")
@@ -447,6 +456,25 @@ class DashUI(QWidget):
         dlg.model_selected.connect(self.set_active_model)
         dlg.exec()
 
+    def _open_tuning_dialog(self):
+        from ui.model_tuning_dialog import ModelTuningDialog
+        
+        # [Safety Check] 커널 부팅 전에는 세션이 없으므로 경고
+        if not self.ctrl.active_session:
+            self.show_toast("⚠ 커널을 먼저 부팅해야 튜닝이 가능합니다.")
+            return
+
+        # 현재 세션의 스트레스 설정(Tuning 포함) 로드
+        dlg = ModelTuningDialog(current_options=self.ctrl.active_session.stress_config, parent=self)
+        
+        def on_settings_save(new_opts):
+            self.ctrl.active_session.stress_config = new_opts
+            self.show_toast("✅ Tuning parameters applied.")
+            self.log_bench(f"[SYSTEM] Parameters Updated: Temp={new_opts.temperature}, Penalty={new_opts.repeat_penalty}")
+            
+        dlg.settings_updated.connect(on_settings_save)
+        dlg.exec()
+
     def _open_report(self):
         from ui.data_table_dialog import open_report_viewer
         open_report_viewer("Edge_v5_Singularity_Report.csv", parent=self)
@@ -604,7 +632,7 @@ class DashUI(QWidget):
 
     def apply_theme_to_graphs(self, is_dark: bool):
         bg    = '#020617' if is_dark else '#ffffff'
-        fg    = '#94a3b8' if is_dark else '#475569'
+        fg    = '#f8fafc' if is_dark else '#0f172a'  # 훨씬 밝은 텍스트
         alpha = 0.08 if is_dark else 0.15
 
         plots = [self.cpu_plot, self.ram_plot, self.tok_plot]
@@ -618,6 +646,9 @@ class DashUI(QWidget):
             p.getAxis('left').setTextPen(fg)
             p.getAxis('bottom').setPen(fg)
             p.getAxis('bottom').setTextPen(fg)
+            # 차트 제목 폰트 크기 확대
+            if hasattr(p, 'titleLabel') and p.titleLabel:
+                p.titleLabel.setStyleSheet(f"color: {fg}; font-weight: bold; font-size: 12px;")
 
         console_style = (
             f"background-color: {bg}; color: {'#94a3b8' if is_dark else '#1e293b'};"
@@ -694,6 +725,28 @@ class DashUI(QWidget):
                 pass
 
     # ── Slots ────────────────────────────────────────────────────────────
+
+    def _on_chaos_toggle(self):
+        """[Engineering] 카오스 모드 토글 시 시각적 피드백 강화"""
+        is_on = self.btn_chaos.isChecked()
+        if is_on:
+            # ON: 오렌지 엑센트 강화
+            self.btn_chaos.setStyleSheet("background-color: #ff6b35; color: #fff; border: 2px solid #ff9500; border-radius: 4px; font-weight: bold;")
+            # 컨트롤 바 배경을 약간 붉은색계열로 변경하여 위험 상태 알림
+            self.findChild(QFrame, "ControlCard").setStyleSheet(
+                "QFrame#ControlCard { background-color: #451a03; border: 1px solid #f97316; border-radius: 8px; }"
+            )
+            self.show_toast("🔥 CHAOS MODE: 인젝션 활성화 (Virtual Stress ON)")
+        else:
+            # OFF: 원래대로 복구
+            self.btn_chaos.setStyleSheet("background-color: #f59e0b; color: #0f172a; border: none; border-radius: 4px;")
+            self.findChild(QFrame, "ControlCard").setStyleSheet(
+                "QFrame#ControlCard { background-color: #1e293b; border: 1px solid #334155; border-radius: 8px; }"
+            )
+            self.show_toast("✅ CHAOS MODE: 해제됨")
+        
+        self.chaos_monkey_signal.emit()
+
 
     def _on_shutdown_clicked(self):
         self.shutdown_signal.emit()

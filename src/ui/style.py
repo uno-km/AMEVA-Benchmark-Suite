@@ -13,7 +13,7 @@ class PremiumStyle:
                 "SURFACE": "#1e293b",
                 "BORDER": "#334155",
                 "TEXT_MAIN": "#f8fafc",
-                "TEXT_DIM": "#94a3b8",
+                "TEXT_DIM": "#cbd5e1", # [Engineering Fix] 더 밝게 조정 (기존 #94a3b8)
                 "INPUT_BG": "#020617",
                 "TAB_PANE": "#0f172a"
             }
@@ -23,14 +23,15 @@ class PremiumStyle:
                 "ACCENT": "#059669",
                 "DANGER": "#dc2626",
                 "WARNING": "#d97706",
-                "BG_DARK": "#f1f5f9",
+                "BG_DARK": "#f8fafc",
                 "SURFACE": "#ffffff",
                 "BORDER": "#cbd5e1",
                 "TEXT_MAIN": "#0f172a",
-                "TEXT_DIM": "#475569",
-                "INPUT_BG": "#f8fafc",
+                "TEXT_DIM": "#334155", # [Engineering Fix] 더 선명하게 조정 (기존 #475569)
+                "INPUT_BG": "#ffffff",
                 "TAB_PANE": "#ffffff"
             }
+
 
         return f"""
             QMainWindow, QWidget {{
