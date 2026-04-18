@@ -7,13 +7,7 @@ data_table_dialog.py  –  공통 데이터 테이블 뷰어 (리포트 / 하네
 import csv
 from typing import List, Dict, Optional
 
-from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QTableWidget, QTableWidgetItem, QHeaderView, QLineEdit,
-    QFrame, QSizePolicy, QAbstractItemView
-)
-from PySide6.QtCore import Qt, QSortFilterProxyModel, QTimer
-from PySide6.QtGui import QColor, QFont
+from ui.qt_bridge import *
 
 
 # ─────────────────────────────────────────────────────────────────────────────

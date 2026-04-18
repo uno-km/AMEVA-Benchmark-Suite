@@ -1,5 +1,4 @@
-from PySide6.QtWidgets import QStatusBar, QHBoxLayout, QLabel, QWidget
-from PySide6.QtCore import Qt, Signal
+from ui.qt_bridge import *
 
 class ServiceIndicator(QWidget):
     """상태 표시등 아이콘과 텍스트가 결합된 위젯"""

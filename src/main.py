@@ -11,8 +11,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
-from PySide6.QtWidgets import QApplication, QMainWindow, QStackedWidget, QMessageBox
-from PySide6.QtCore import Qt
+from ui.qt_bridge import *
+from core.constants import DEFAULT_INFERENCE_MODEL
 
 # 모델 (데이터 및 사양)
 from models.hardware import HardwareService
@@ -127,6 +127,7 @@ class AMEVAController(QMainWindow):
                 "cpu_cores": session.boot_config.cpu_cores,
                 "ram_mb":    session.boot_config.ram_mb,
                 "gpu_layers": session.boot_config.gpu_layers,
+                "model_name": session.boot_config.model_name # 누락된 필드 추가
             },
             engine=self.engine
         )

@@ -56,12 +56,11 @@ class MatrixEngine:
             self.cleanup_old_arena()
 
             # Volumes
-            models_dir = os.path.abspath(
-                os.path.join(os.path.dirname(__file__), "..", "..", "ai_vault")
-            )
+            from .constants import get_vault_abs_path, INTERNAL_VAULT_PATH, OLLAMA_BASE_URL, LLAMA_CPP_PORT
+            models_dir = get_vault_abs_path()
             os.makedirs(models_dir, exist_ok=True)
-            volumes = {models_dir: {'bind': '/vault', 'mode': 'rw'}}
-            self._log(f"· 볼륨 마운트 준비: {models_dir} → /models")
+            volumes = {models_dir: {'bind': INTERNAL_VAULT_PATH, 'mode': 'rw'}}
+            self._log(f"· 볼륨 마운트 준비: {models_dir} → {INTERNAL_VAULT_PATH}")
 
             # GPU
             device_requests = []
@@ -73,17 +72,22 @@ class MatrixEngine:
                     self._log(f"[WARN] GPU 요청 실패 → CPU 전용 모드: {ge}")
 
             # Engine
+            model_name = config.get("model_name", "qwen2.5-0.5b.gguf")
+            if not model_name.endswith(".gguf") and engine_type == "ENG":
+                model_name += ".gguf"
+
             if engine_type == "OLM":
                 image = "ollama/ollama"
                 cmd = None
                 ports = {'11434/tcp': 11434}
-                self._log("· 런타임: OLLAMA (Managed HTTP API, port 11434)")
+                self._log(f"· 런타임: OLLAMA (Managed API, port 11434)")
             else:
                 image = "ghcr.io/ggml-org/llama.cpp:server"
-                cmd = ["-m", "/models/qwen2.5-0.5b.gguf", "-c", "2048",
-                       "--host", "0.0.0.0", "--port", "8080"]
-                ports = {'8080/tcp': 8080}
-                self._log("· 런타임: LLAMA.CPP Server (GGUF, port 8080)")
+                # 경로 수정: /models -> /vault
+                cmd = ["-m", f"{INTERNAL_VAULT_PATH}/{model_name}", "-c", "2048",
+                       "--host", "0.0.0.0", "--port", str(LLAMA_CPP_PORT)]
+                ports = {f'{LLAMA_CPP_PORT}/tcp': LLAMA_CPP_PORT}
+                self._log(f"· 런타임: LLAMA.CPP Server (GGUF: {model_name})")
 
             # Image check/pull
             self._log(f"이미지 인스펙션 중: {image}")
@@ -135,11 +139,11 @@ class MatrixEngine:
             
             # ⚠️ 크리티컬: 모델 로딩 완료 대기 (LLAMA.CPP는 시간이 많이 걸림)
             self._log("⏳ 서버 준비 상태 확인 중 (최대 60초)...")
-            server_ready = self._wait_for_server_ready(engine_type, deadline_sec=60)
+            server_ready = self._wait_for_server_ready(engine_type, model_name, deadline_sec=60)
             if server_ready:
                 self._log("✓ 서버 준비 완료. 추론 가능 상태.")
             else:
-                self._log("[WARN] 서버 준비 시간초과 (60초) - 재시도 로직 활성화")
+                self._log("[WARN] 서버 준비 시간초과 (60초) - 재시도 로직 활사화")
             
             return True, f"[{engine_type}] ONLINE  CPU:{cpu_cores}c  RAM:{ram_mb}MB"
 
@@ -147,19 +151,17 @@ class MatrixEngine:
             self._log(f"[FATAL] 부팅 실패: {e}")
             return False, str(e)
 
-    def _wait_for_server_ready(self, engine_type: str, deadline_sec: int = 60) -> bool:
+    def _wait_for_server_ready(self, engine_type: str, model_name: str, deadline_sec: int = 60) -> bool:
         """[Engineering] 서버가 응답 가능한 상태인지 + 모델 로드가 완료되었는지 실질적으로 확인합니다."""
         import requests
+        from .constants import OLLAMA_BASE_URL, LLAMA_CPP_PORT
         start = time.time()
-        port = 8080 if engine_type == "ENG" else 11434
         
         while time.time() - start < deadline_sec:
             try:
-                # LLAMA.CPP: /health 가 200이어도 모델 로딩 중일 수 있음. 
-                # 가벼운 추론 시도로 확인.
                 if engine_type == "ENG":
                     resp = requests.post(
-                        f"http://127.0.0.1:{port}/completion",
+                        f"http://127.0.0.1:{LLAMA_CPP_PORT}/completion",
                         json={"prompt": " ", "n_predict": 1},
                         timeout=2
                     )
@@ -168,8 +170,8 @@ class MatrixEngine:
                 else:
                     # OLLAMA: /api/generate 에 모델 전달하여 실제 로드 완료 확인
                     resp = requests.post(
-                        f"http://127.0.0.1:{port}/api/generate",
-                        json={"model": "qwen2.5:0.5b", "prompt": " ", "stream": False},
+                        f"{OLLAMA_BASE_URL}/api/generate",
+                        json={"model": model_name, "prompt": " ", "stream": False},
                         timeout=5
                     )
                     if resp.status_code == 200:

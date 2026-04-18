@@ -1,14 +1,5 @@
-"""
-chat_panel.py  –  VS Code 스타일 슬라이딩 채팅 사이드바
-[V5.6] QPropertyAnimation 으로 maximumWidth 0 ↔ 430px 애니메이션
-       말풍선 디자인, 스트리밍 토큰 지원
-"""
-from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QLineEdit, QScrollArea, QFrame, QSizePolicy, QTextEdit
-)
-from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve, QSize
-from PySide6.QtGui import QFont, QColor, QTextCursor
+from ui.qt_bridge import *
+from typing import Optional
 
 
 # ── Palette ────────────────────────────────────────────────────────────────

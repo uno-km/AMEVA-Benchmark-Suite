@@ -1,15 +1,17 @@
 import time
 import json
-import requests
 import subprocess
 import re
 from datetime import datetime
 from openai import OpenAI
-from PySide6.QtCore import QThread, Signal
+import psutil
+
+from ui.qt_bridge import *
+from .ollama_client import OllamaClient
+from .constants import OLLAMA_BASE_URL, LLAMA_CPP_PORT
 from models.settings import BenchmarkSession
 from models.hardware import HardwareService
-from core.prompt_utils import format_chatml
-
+from core.prompt_utils import format_chatml, get_stop_tokens
 
 def _ts() -> str:
     now = datetime.now()
@@ -108,18 +110,16 @@ class ExecutionEngine(QThread):
         if ":" in judge_model or "exaone" in judge_model.lower() or "qwen" in judge_model.lower():
             try:
                 self.chunk_signal.emit(f"\n\n--- 🧠 Local Judge Thought ({judge_model}) ---\n")
-                url = "http://127.0.0.1:11434/api/chat"
-                payload = {
-                    "model": judge_model,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_content}
-                    ],
-                    "stream": True,
-                    "format": "json"
-                }
+                
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_content}
+                ]
+                
                 full_reason = ""
-                resp = requests.post(url, json=payload, stream=True, timeout=60)
+                # OllamaClient 활용
+                resp = OllamaClient.chat_stream(judge_model, messages, options={"temperature": 0.0})
+                
                 for line in resp.iter_lines():
                     if line:
                         chunk = json.loads(line)
@@ -248,18 +248,16 @@ class ExecutionEngine(QThread):
         model_name  = self.session.boot_config.model_name
 
         if engine_type == "OLM":
-            url = "http://127.0.0.1:11434/api/generate"
+            url = f"{OLLAMA_BASE_URL}/api/generate"
             self._slog(f"Ollama API 엔드포인트: {url}")
             try:
-                requests.post(
-                    "http://127.0.0.1:11434/api/pull",
-                    json={"name": model_name}, timeout=5
-                )
+                # OllamaClient 활용
+                OllamaClient.pull_model_stream(model_name)
                 self._slog(f"모델 풀 완료: {model_name}")
             except Exception as e:
                 self._slog(f"[WARN] 모델 풀 실패 (이미 존재할 수 있음): {e}")
         else:
-            url = "http://127.0.0.1:8080/completion"
+            url = f"http://{LLAMA_CPP_HOST}:{LLAMA_CPP_PORT}/completion"
             self._slog(f"LLAMA.CPP 엔드포인트: {url}")
 
         has_nv = self.engine_core.container is not None # 컨테이너가 있고 nvida-smi 가능 시 True
@@ -386,7 +384,7 @@ class ExecutionEngine(QThread):
                                     prompt_ms_per_t = round(p_ms / prompt_n, 2) if prompt_n > 0 else 0
                                     sample_ms = t_info.get('predicted_ms', 0)
                                     break
-
+                                
             except Exception as e:
                 self._slog(f"[에러] 스트림 통신 실패: {e}")
                 self._log(f"[에러] {e}")

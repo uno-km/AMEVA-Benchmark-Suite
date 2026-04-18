@@ -1,6 +1,4 @@
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTextEdit, QLabel
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QTextCursor
+from ui.qt_bridge import *
 
 
 class LogOverlay(QWidget):

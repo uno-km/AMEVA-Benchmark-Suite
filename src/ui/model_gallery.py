@@ -1,28 +1,15 @@
-"""
-model_gallery.py  –  모델 갤러리 모달 (V5.6)
-9종 GGUF 모델 설치·관리 QDialog
-카테고리: Lite (즉시 실행) / Medium (밸런스) / Heavy (최고 성능)
-비동기 다운로드 + 스피너 + 시스템 트레이 알림
-"""
 import os
+import json
 import requests
-from typing import Optional
-
-from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QScrollArea, QWidget, QProgressBar, QGroupBox,
-    QApplication, QSystemTrayIcon
-)
-from PySide6.QtCore import Qt, Signal, QThread, QTimer, QSize
-from PySide6.QtGui import QFont, QColor, QIcon, QMovie
+from ui.qt_bridge import *
+from core.constants import get_vault_abs_path, OLLAMA_BASE_URL
+from core.ollama_client import OllamaClient
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Model Catalogue
 # ─────────────────────────────────────────────────────────────────────────────
 
-MODELS_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ai_vault"
-)
+MODELS_DIR = get_vault_abs_path()
 
 MODEL_CATALOGUE = [
     # ── Lite ──────────────────────────────────────────────────── 최소 RAM 2GB
@@ -213,13 +200,14 @@ class OllamaPullWorker(QThread):
     def run(self):
         tag = self._info["ollama_tag"]
         model_id = self._info["id"]
-        url = "http://127.0.0.1:11434/api/pull"
         
         try:
             self.log_signal.emit(f"[OLM] 풀링 시작: {tag}")
-            resp = requests.post(url, json={"name": tag}, stream=True, timeout=60)
+            # OllamaClient 활용
+            resp = OllamaClient.pull_model_stream(tag)
             resp.raise_for_status()
 
+            import requests # 타입 힌트/핸들링용 (필요시)
             for line in resp.iter_lines():
                 if self.isInterruptionRequested():
                     self.done_signal.emit(False, model_id)
@@ -615,15 +603,10 @@ class ModelGalleryDialog(QDialog):
 
     def _is_ollama_installed(self, ollama_tag: str) -> bool:
         """Ollama API를 통해 모델 설치 여부 확인"""
-        try:
-            resp = requests.get("http://127.0.0.1:11434/api/tags", timeout=1)
-            if resp.status_code == 200:
-                tags = [m["name"] for m in resp.json().get("models", [])]
-                # 태그가 정확히 일치하거나 :latest 등이 붙은 경우 체크
-                return ollama_tag in tags or f"{ollama_tag}:latest" in tags
-        except:
-            pass
-        return False
+        models = OllamaClient.list_local_models()
+        tags = [m["name"] for m in models]
+        # 태그가 정확히 일치하거나 :latest 등이 붙은 경우 체크
+        return ollama_tag in tags or f"{ollama_tag}:latest" in tags
 
     # ── Slots ─────────────────────────────────────────────────────────────
 

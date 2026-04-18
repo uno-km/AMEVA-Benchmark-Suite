@@ -1,9 +1,5 @@
-from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QComboBox, QGroupBox,
-    QDoubleSpinBox, QSpinBox, QButtonGroup, QSizePolicy, QFrame
-)
-from PySide6.QtCore import Qt
+from ui.qt_bridge import *
+from core.constants import DEFAULT_INFERENCE_MODEL
 from models.hardware import HardwareService
 from models.settings import BootstrapConfig, StressOptions, BenchmarkSession
 
@@ -245,7 +241,8 @@ class WizardUI(QWidget):
             engine=selected_engine,
             cpu_cores=self.cpu_spin.value(),
             ram_mb=self.ram_spin.value(),
-            gpu_layers=self.gpu_spin.value() if self.specs.has_nvidia else 0
+            gpu_layers=self.gpu_spin.value() if self.specs.has_nvidia else 0,
+            model_name=DEFAULT_INFERENCE_MODEL
         )
         stress_config = StressOptions(
             threads=self.thread_spin.value(),

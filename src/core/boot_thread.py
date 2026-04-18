@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Dict
-from PySide6.QtCore import QThread, Signal
+from ui.qt_bridge import *
 
 
 def _ts() -> str:

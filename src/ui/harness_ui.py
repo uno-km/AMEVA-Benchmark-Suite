@@ -2,14 +2,7 @@
 harness_ui.py  –  AMEVA Harness Manager (V5.6)
 테이블 가독성 대폭 개선 + 공통 DataTableDialog 활용
 """
-from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QTableWidget,
-    QTableWidgetItem, QPushButton, QLabel, QHeaderView,
-    QDialog, QFormLayout, QLineEdit, QTextEdit, QComboBox,
-    QMessageBox, QFrame, QAbstractItemView
-)
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QFont
+from ui.qt_bridge import *
 import csv
 import os
 

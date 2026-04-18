@@ -1,8 +1,8 @@
 import time
-import requests
 import docker
 import subprocess
-from PySide6.QtCore import QThread, Signal
+from ui.qt_bridge import *
+from core.ollama_client import OllamaClient
 
 class ServiceMonitorThread(QThread):
     """
@@ -39,11 +39,9 @@ class ServiceMonitorThread(QThread):
 
     def _check_ollama(self):
         try:
-            resp = requests.get("http://127.0.0.1:11434/api/tags", timeout=2)
-            if resp.status_code == 200:
-                self.status_updated.emit("ollama", True, "Ollama API is serving.")
-            else:
-                self.status_updated.emit("ollama", False, f"Ollama HTTP {resp.status_code}")
+            # OllamaClient 활용하여 태그 리스트 체크
+            models = OllamaClient.list_local_models()
+            self.status_updated.emit("ollama", True, f"Ollama API is serving ({len(models)} models found).")
         except Exception as e:
             self.status_updated.emit("ollama", False, "Ollama is not responding.")
 

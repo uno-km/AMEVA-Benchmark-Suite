@@ -1,16 +1,8 @@
-"""
-dash_ui.py  –  AMEVA Dashboard UI (V5.6)
-변경: 채팅 사이드바 슬라이딩 레이아웃, 모델 갤러리 버튼, 보고서 버튼
-"""
-import psutil
+from ui.qt_bridge import *
 import pyqtgraph as pg
+import psutil
 from datetime import datetime
-from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QTextEdit, QComboBox, QGroupBox, QLineEdit, QProgressBar,
-    QTabWidget, QFrame, QSizePolicy, QSplitter
-)
-from PySide6.QtCore import Qt, Signal, QTimer
+from core.constants import OLLAMA_BASE_URL, LLAMA_CPP_HOST, DEFAULT_INFERENCE_MODEL, DEFAULT_JUDGE_MODEL
 from models.hardware import HardwareService
 from ui.log_overlay import LogOverlay
 from ui.chat_panel import ChatPanel
