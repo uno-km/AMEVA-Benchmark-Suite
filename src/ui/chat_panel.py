@@ -320,6 +320,10 @@ class ChatPanel(QWidget):
         self.chat_interrupted.emit()
         self.set_waiting(False, "🛑 중단됨")
 
+    def clear_chat(self):
+        """외부 컨트롤러용 채팅 초기화 API."""
+        self._clear_messages()
+
     def _clear_messages(self):
         # stretch 제외하고 모두 삭제
         while self._msg_layout.count() > 1:

@@ -49,6 +49,12 @@ class WizardUI(QWidget):
         h_row.addWidget(header)
         h_row.addStretch()
 
+        self.btn_gallery = QPushButton("📊 모델 현황")
+        self.btn_gallery.setFixedWidth(100)
+        self.btn_gallery.setStyleSheet("font-weight: 600; font-size: 11px;")
+        self.btn_gallery.clicked.connect(self._open_gallery)
+        h_row.addWidget(self.btn_gallery)
+
         self.theme_btn = QPushButton("🌓")
         self.theme_btn.setFixedSize(36, 30)
         self.theme_btn.clicked.connect(self.ctrl.toggle_theme)
@@ -79,6 +85,12 @@ class WizardUI(QWidget):
 
         # 초기 프리셋 적용
         self._on_preset_change()
+
+    def _open_gallery(self):
+        """모델 갤러리를 팝업하여 다운로드 상태를 확인합니다."""
+        from ui.model_gallery import ModelGalleryDialog
+        dlg = ModelGalleryDialog(current_model="", parent=self)
+        dlg.exec()
 
     def _build_engine_section(self) -> QGroupBox:
         """섹션 1: 엔진 선택 (수평 토글 버튼 + 확장 가능 구조)."""

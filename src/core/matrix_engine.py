@@ -2,6 +2,8 @@ import docker
 import time
 import os
 from typing import Optional, Callable, Dict, Tuple
+from core.constants import OLLAMA_BASE_URL, LLAMA_CPP_HOST, LLAMA_CPP_PORT, get_vault_abs_path, INTERNAL_VAULT_PATH
+from core.models_data import get_filename_by_id
 
 
 class MatrixEngine:
@@ -41,6 +43,7 @@ class MatrixEngine:
 
     def boot_matrix(self, config: Dict) -> Tuple[bool, str]:
         """매트릭스(Docker 컨테이너)를 부팅합니다. 각 단계를 상세 로깅합니다."""
+        model_name = config.get("model_name", "qwen2.5:1.5b")
         cpu_cores = float(config.get("cpu_cores", 2.0))
         ram_mb = int(config.get("ram_mb", 2048))
         engine_type = config.get("engine", "OLM")
@@ -71,11 +74,7 @@ class MatrixEngine:
                 except Exception as ge:
                     self._log(f"[WARN] GPU 요청 실패 → CPU 전용 모드: {ge}")
 
-            # Engine
-            model_name = config.get("model_name", "qwen2.5-0.5b.gguf")
-            if not model_name.endswith(".gguf") and engine_type == "ENG":
-                model_name += ".gguf"
-
+            # Engine: model_name is the ID passed from UI
             if engine_type == "OLM":
                 image = "ollama/ollama"
                 cmd = None
@@ -83,11 +82,12 @@ class MatrixEngine:
                 self._log(f"· 런타임: OLLAMA (Managed API, port 11434)")
             else:
                 image = "ghcr.io/ggml-org/llama.cpp:server"
-                # 경로 수정: /models -> /vault
-                cmd = ["-m", f"{INTERNAL_VAULT_PATH}/{model_name}", "-c", "2048",
+                actual_filename = get_filename_by_id(model_name)
+                # 경로 수정: /models -> /vault. 조회된 실제 파일명 사용.
+                cmd = ["-m", f"{INTERNAL_VAULT_PATH}/{actual_filename}", "-c", "2048",
                        "--host", "0.0.0.0", "--port", str(LLAMA_CPP_PORT)]
                 ports = {f'{LLAMA_CPP_PORT}/tcp': LLAMA_CPP_PORT}
-                self._log(f"· 런타임: LLAMA.CPP Server (GGUF: {model_name})")
+                self._log(f"· 런타임: LLAMA.CPP Server (GGUF: {actual_filename})")
 
             # Image check/pull
             self._log(f"이미지 인스펙션 중: {image}")
@@ -154,14 +154,13 @@ class MatrixEngine:
     def _wait_for_server_ready(self, engine_type: str, model_name: str, deadline_sec: int = 60) -> bool:
         """[Engineering] 서버가 응답 가능한 상태인지 + 모델 로드가 완료되었는지 실질적으로 확인합니다."""
         import requests
-        from .constants import OLLAMA_BASE_URL, LLAMA_CPP_PORT
         start = time.time()
         
         while time.time() - start < deadline_sec:
             try:
                 if engine_type == "ENG":
                     resp = requests.post(
-                        f"http://127.0.0.1:{LLAMA_CPP_PORT}/completion",
+                        f"http://{LLAMA_CPP_HOST}:{LLAMA_CPP_PORT}/completion",
                         json={"prompt": " ", "n_predict": 1},
                         timeout=2
                     )

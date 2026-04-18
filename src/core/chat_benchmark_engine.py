@@ -8,8 +8,11 @@ import json
 import requests
 from datetime import datetime
 
-from PySide6.QtCore import QThread, Signal
-
+from ui.qt_bridge import *
+from core.ollama_client import OllamaClient
+from core.constants import OLLAMA_BASE_URL, LLAMA_CPP_HOST, LLAMA_CPP_PORT
+from core.judge_service import JudgeService
+from core.prompt_utils import format_chatml, get_stop_tokens
 from models.settings import BenchmarkSession
 from models.report_db import ReportManager
 
@@ -56,7 +59,7 @@ class ChatBenchmarkEngine(QThread):
         # 엔진별 페이로드 구성 (동적 튜닝 파라미터 적용)
         sc = session.stress_config
         if engine_type == "OLM":
-            url = "http://127.0.0.1:11434/api/generate"
+            url = f"{OLLAMA_BASE_URL}/api/generate"
             payload = {
                 "model":   model_name,
                 "prompt":  formatted_prompt,
@@ -71,7 +74,7 @@ class ChatBenchmarkEngine(QThread):
                 },
             }
         else:
-            url = "http://127.0.0.1:8080/completion"
+            url = f"http://{LLAMA_CPP_HOST}:{LLAMA_CPP_PORT}/completion"
             payload = {
                 "prompt":    formatted_prompt,
                 "stream":    True,
@@ -181,6 +184,21 @@ class ChatBenchmarkEngine(QThread):
             "Judge_Score":         "N/A",
             "Metric_Source":       "chat",
         }
+
+        # [Judge My Chat] 실시간 채팅 비평 로직 가동
+        if session.stress_config.judge_model:
+            self._slog(f"🧠 판정관 호출 중: {session.stress_config.judge_model}")
+            score_data = JudgeService.call_llm_judge(
+                self._prompt, 
+                text_acc, 
+                session.stress_config,
+                chunk_callback=self.chunk_signal.emit
+            )
+            result["Judge_Score"] = score_data.get("score", 0)
+            result["Judge_Reason"] = score_data.get("reason", "")
+            
+            # 최종 결과 리포트 업데이트
+            self._slog(f"🏆 채팅 판정 결과: {result['Judge_Score']}/10")
 
         # CSV 즉시 삽입
         try:

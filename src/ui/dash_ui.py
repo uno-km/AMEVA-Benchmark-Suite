@@ -45,8 +45,9 @@ class DashUI(QWidget):
         self.is_streaming_enabled = False
         self._stream_buttons = []
 
-        # 현재 선택 모델명 (콤보박스 대체)
-        self._active_model = "qwen2.5:1.5b"
+        # 현재 선택 모델명 및 엔진 (콤보박스 대체)
+        self._active_model  = ""
+        self._active_engine = ""
 
         self._setup()
 
@@ -135,14 +136,14 @@ class DashUI(QWidget):
         cl.addWidget(self.lbl_engine_info)
         cl.addStretch()
 
-        # ── 모델 변경 버튼 (콤보박스 대체) ─────────────────────────────
-        self._lbl_active_model = QLabel(f"모델: {self._active_model}")
+        # ── 모델 현황 버튼 (콤보박스 대체) ─────────────────────────────
+        self._lbl_active_model = QLabel("모델: 미선택")
         self._lbl_active_model.setStyleSheet(
             "color: #94a3b8; font-size: 11px; border: none;"
         )
         cl.addWidget(self._lbl_active_model)
 
-        self.btn_model = QPushButton("🛠️ 모델 변경")
+        self.btn_model = QPushButton("📊 모델 현황")
         self.btn_model.setObjectName("ModelBtn")
         self.btn_model.setFixedWidth(100)
         self.btn_model.setToolTip("모델 갤러리 열기")
@@ -506,10 +507,14 @@ class DashUI(QWidget):
     # Public API
     # ────────────────────────────────────────────────────────────────────────
 
-    def set_active_model(self, name: str):
+    def set_active_model(self, name: str, engine_type: str):
         self._active_model = name
-        self._lbl_active_model.setText(f"모델: {name}")
-        self.show_toast(f"✅ 모델 변경됨: {name}")
+        self._active_engine = engine_type
+        self._lbl_active_model.setText(f"모델: {name} ({engine_type})")
+        self.show_toast(f"✅ 모델 변경됨: {name} [{engine_type}]")
+
+    def get_active_engine(self) -> str:
+        return self._active_engine
 
     def get_active_model(self) -> str:
         return self._active_model

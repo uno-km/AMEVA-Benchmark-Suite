@@ -11,125 +11,7 @@ from core.ollama_client import OllamaClient
 
 MODELS_DIR = get_vault_abs_path()
 
-MODEL_CATALOGUE = [
-    # ── Lite ──────────────────────────────────────────────────── 최소 RAM 2GB
-    {
-        "id":          "qwen2.5-1.5b",
-        "display":     "Qwen2.5-1.5B-Instruct",
-        "category":    "Lite",
-        "tag":         "⚡ 밸런스 · 한국어 명령",
-        "desc":        "범용 소형 모델. 한국어 지시문 이해 우수. 노트북CPU에서도 빠름.",
-        "min_ram_gb":  2,
-        "size_gb":     1.0,
-        "filename":    "qwen2.5-1.5b-instruct-q4_k_m.gguf",
-        "hf_url":      "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf",
-        "ollama_tag":  "qwen2.5:1.5b",
-    },
-    {
-        "id":          "llama-3.2-1b",
-        "display":     "Llama-3.2-1B-Instruct",
-        "category":    "Lite",
-        "tag":         "🪶 초경량 · JSON 포맷팅",
-        "desc":        "가장 작은 모델. JSON 출력·구조화 태스크에 최적. RAM 2GB 이하 OK.",
-        "min_ram_gb":  2,
-        "size_gb":     0.7,
-        "filename":    "Llama-3.2-1B-Instruct-Q4_K_M.gguf",
-        "hf_url":      "https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf",
-        "ollama_tag":  "llama3.2:1b",
-    },
-    {
-        "id":          "deepseek-r1-1.5b",
-        "display":     "DeepSeek-R1-Distill-Qwen-1.5B",
-        "category":    "Lite",
-        "tag":         "🧠 논리 추론 · 경로 판단",
-        "desc":        "추론 특화 증류 모델. 수학·논리·단계적 사고 강점. 1.5B 대비 성능 이상.",
-        "min_ram_gb":  2,
-        "size_gb":     1.0,
-        "filename":    "DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf",
-        "hf_url":      "https://huggingface.co/bartowski/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/main/DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf",
-        "ollama_tag":  "deepseek-r1:1.5b",
-    },
-    {
-        "id":          "gemma-2-2b",
-        "display":     "Gemma-2-2B-It",
-        "category":    "Lite",
-        "tag":         "🏷️ 분류 · 객관식 판단",
-        "desc":        "Google DeepMind 2B 모델. 분류·선택형 판단 우수. 효율 대비 품질 높음.",
-        "min_ram_gb":  3,
-        "size_gb":     1.6,
-        "filename":    "gemma-2-2b-it-Q4_K_M.gguf",
-        "hf_url":      "https://huggingface.co/bartowski/gemma-2-2b-it-GGUF/resolve/main/gemma-2-2b-it-Q4_K_M.gguf",
-        "ollama_tag":  "gemma2:2b",
-    },
-    # ── Medium ────────────────────────────────────────────────── RAM 4~6GB
-    {
-        "id":          "qwen2.5-3b",
-        "display":     "Qwen2.5-3B-Instruct",
-        "category":    "Medium",
-        "tag":         "💻 코딩 · 로직 분석",
-        "desc":        "코딩·로직 분석 3B 최강. 파이썬/JS 함수 작성, 알고리즘 추론 탁월.",
-        "min_ram_gb":  4,
-        "size_gb":     2.0,
-        "filename":    "qwen2.5-3b-instruct-q4_k_m.gguf",
-        "hf_url":      "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf",
-        "ollama_tag":  "qwen2.5:3b",
-    },
-    {
-        "id":          "llama-3.2-3b",
-        "display":     "Llama-3.2-3B-Instruct",
-        "category":    "Medium",
-        "tag":         "🔗 논리 추론 · 맥락 유지",
-        "desc":        "Meta 3B. 긴 문맥 유지·대화 흐름 일관성 우수. 범용 중형 추천.",
-        "min_ram_gb":  4,
-        "size_gb":     2.0,
-        "filename":    "Llama-3.2-3B-Instruct-Q4_K_M.gguf",
-        "hf_url":      "https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q4_K_M.gguf",
-        "ollama_tag":  "llama3.2:3b",
-    },
-    # ── Heavy ─────────────────────────────────────────────────── RAM 8GB+
-    {
-        "id":          "exaone-7.8b",
-        "display":     "EXAONE-3.0-7.8B-Instruct",
-        "category":    "Heavy",
-        "tag":         "🇰🇷 한국어 뉘앙스 · 최고 성능",
-        "desc":        "LG AI Research 7.8B 한국어 1위 모델. 문맥·뉘앙스·존댓말 완벽 이해.",
-        "min_ram_gb":  8,
-        "size_gb":     4.8,
-        "filename":    "EXAONE-3.0-7.8B-Instruct-Q4_K_M.gguf",
-        "hf_url":      "https://huggingface.co/bartowski/EXAONE-3.0-7.8B-Instruct-GGUF/resolve/main/EXAONE-3.0-7.8B-Instruct-Q4_K_M.gguf",
-        "ollama_tag":  "exaone3:7.8b",
-    },
-    {
-        "id":          "kullm3-8b",
-        "display":     "KULLM3-8B",
-        "category":    "Heavy",
-        "tag":         "🌐 Llama3 기반 한국어 패치",
-        "desc":        "Korea Univ. Llama3 파인튜닝. 한국어 교육·상식·추론 특화. 8B급 안정성.",
-        "min_ram_gb":  8,
-        "size_gb":     4.9,
-        "filename":    "KULLM3-Q4_K_M.gguf",
-        "hf_url":      "https://huggingface.co/bartowski/KULLM3-GGUF/resolve/main/KULLM3-Q4_K_M.gguf",
-        "ollama_tag":  "kullm3",
-    },
-    {
-        "id":          "eeve-10.8b",
-        "display":     "EEVE-Korean-10.8B",
-        "category":    "Heavy",
-        "tag":         "📚 어휘력 특화 · 대형 모델",
-        "desc":        "Yanolja 10.8B 한국어 어휘력 특화. 문학·법률·의학 어휘 이해 최상위.",
-        "min_ram_gb":  12,
-        "size_gb":     6.6,
-        "filename":    "EEVE-Korean-Instruct-10.8B-v1.0-Q4_K_M.gguf",
-        "hf_url":      "https://huggingface.co/bartowski/EEVE-Korean-Instruct-10.8B-v1.0-GGUF/resolve/main/EEVE-Korean-Instruct-10.8B-v1.0-Q4_K_M.gguf",
-        "ollama_tag":  "eeve-korean:10.8b",
-    },
-]
-
-CATEGORY_META = {
-    "Lite":   {"icon": "⚡", "color": "#10b981", "desc": "RAM 2~3GB  |  즉시 실행 가능  |  CPU 전용 환경 OK"},
-    "Medium": {"icon": "⚙️", "color": "#3b82f6", "desc": "RAM 4~6GB  |  일상 노트북 권장  |  4코어 이상"},
-    "Heavy":  {"icon": "🔥", "color": "#f59e0b", "desc": "RAM 8GB+   |  고성능 워크스테이션  |  GPU 권장"},
-}
+from core.models_data import MODEL_CATALOGUE, CATEGORY_META
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Download Worker
@@ -203,11 +85,9 @@ class OllamaPullWorker(QThread):
         
         try:
             self.log_signal.emit(f"[OLM] 풀링 시작: {tag}")
-            # OllamaClient 활용
             resp = OllamaClient.pull_model_stream(tag)
             resp.raise_for_status()
 
-            import requests # 타입 힌트/핸들링용 (필요시)
             for line in resp.iter_lines():
                 if self.isInterruptionRequested():
                     self.done_signal.emit(False, model_id)
@@ -327,15 +207,15 @@ QScrollBar::handle:vertical {{
 class ModelCard(QFrame):
     """단일 모델 카드 위젯."""
 
-    install_clicked = Signal(dict)    # model_info 전달
-    select_clicked  = Signal(str)     # ollama_tag 전달
+    install_clicked = Signal(dict)       # model_info 전달
+    select_clicked  = Signal(str, str) # model_name, engine_type 전달
 
-    def __init__(self, info: dict, installed: bool, is_current: bool, parent=None):
+    def __init__(self, info: dict, installed: bool, is_current: bool, ollama_on: bool = False, parent=None):
         super().__init__(parent)
         self._info = info
-        self._build(installed, is_current)
+        self._build(installed, is_current, ollama_on)
 
-    def _build(self, installed: bool, is_current: bool):
+    def _build(self, installed: bool, is_current: bool, ollama_on: bool):
         self.setObjectName("ModelCard")
         self.setStyleSheet(
             "QFrame#ModelCard { background-color: #162032;"
@@ -355,6 +235,10 @@ class ModelCard(QFrame):
         name_lbl.setStyleSheet(
             "color: #f1f5f9; font-weight: 700; font-size: 13px;"
         )
+        self._spinner_lbl = QLabel("") # 애니메이션용
+        self._spinner_lbl.setStyleSheet("color: #3b82f6; font-size: 12px; font-weight: 800;")
+        self._spinner_lbl.hide()
+
         tag_lbl = QLabel(self._info["tag"])
         tag_lbl.setStyleSheet(
             "color: #94a3b8; font-size: 10px; font-weight: 600;"
@@ -362,6 +246,7 @@ class ModelCard(QFrame):
             " border-radius: 4px; padding: 1px 6px;"
         )
         name_row.addWidget(name_lbl)
+        name_row.addWidget(self._spinner_lbl)
         name_row.addWidget(tag_lbl)
         name_row.addStretch()
         info_col.addLayout(name_row)
@@ -394,7 +279,6 @@ class ModelCard(QFrame):
         self.btn_gguf = QPushButton("⬇ 다운로드")
         self.btn_gguf.setObjectName("InstallBtn")
         self.btn_gguf.setFixedWidth(85)
-        self.btn_gguf.clicked.connect(lambda: self.install_clicked.emit(self._info))
         gguf_row.addWidget(self.gguf_status)
         gguf_row.addStretch()
         gguf_row.addWidget(self.btn_gguf)
@@ -407,78 +291,64 @@ class ModelCard(QFrame):
         self.btn_ollama = QPushButton("⬇ 풀링")
         self.btn_ollama.setObjectName("InstallBtn")
         self.btn_ollama.setFixedWidth(85)
-        self.btn_ollama.clicked.connect(lambda: self.select_clicked.emit(self._info["ollama_tag"])) # 임시
         ollama_row.addWidget(self.ollama_status)
         ollama_row.addStretch()
         ollama_row.addWidget(self.btn_ollama)
         btn_layout.addLayout(ollama_row)
 
-        # Global Progress (Shared or separate?) - For now, show in the row
+        # Global Progress
         self._progress = QProgressBar()
         self._progress.setFixedHeight(4)
         self._progress.hide()
         btn_layout.addWidget(self._progress)
 
         row.addLayout(btn_layout)
+        self._update_btn_state(installed, is_current, ollama_on)
 
-    def _update_btn_state(self, installed: bool, is_current: bool):
-        if is_current:
-            self._action_btn.setText("✅ 사용 중")
-            self._action_btn.setObjectName("ActiveBtn")
-            self._action_btn.setEnabled(False)
-        elif installed:
-            self._action_btn.setText("▶ 선택")
-            self._action_btn.setObjectName("SelectBtn")
-            self._action_btn.clicked.connect(
-                lambda: self.select_clicked.emit(self._info["ollama_tag"])
-            )
+    def _update_btn_state(self, installed: bool, is_current: bool, ollama_on: bool):
+        # 1. GGUF 전용 버튼 상태
+        if installed:
+            self.btn_gguf.setText("▶ 사용 (GGUF)")
+            self.btn_gguf.setObjectName("SelectBtn")
+            self.btn_gguf.setEnabled(True)
+            try: self.btn_gguf.clicked.disconnect()
+            except: pass
+            self.btn_gguf.clicked.connect(lambda: self.select_clicked.emit(self._info["id"], "ENG"))
         else:
-            self._action_btn.setText("⬇ 설치")
-            self._action_btn.setObjectName("InstallBtn")
-            self._action_btn.clicked.connect(
-                lambda: self.install_clicked.emit(self._info)
-            )
+            self.btn_gguf.setText("⬇ 다운로드")
+            self.btn_gguf.setObjectName("InstallBtn")
+            self.btn_gguf.setEnabled(True)
+            try: self.btn_gguf.clicked.disconnect()
+            except: pass
+            self.btn_gguf.clicked.connect(lambda: self.install_clicked.emit(self._info))
 
-    def set_installing(self, pct: int):
+        # 2. Ollama 전용 버튼 상태 
+        if ollama_on:
+            self.btn_ollama.setText("▶ 사용 (Ollama)")
+            self.btn_ollama.setObjectName("SelectBtn")
+            self.btn_ollama.setEnabled(True)
+            try: self.btn_ollama.clicked.disconnect()
+            except: pass
+            self.btn_ollama.clicked.connect(lambda: self.select_clicked.emit(self._info["ollama_tag"], "OLM"))
+        else:
+            self.btn_ollama.setText("⬇ 풀링")
+            self.btn_ollama.setObjectName("InstallBtn")
+            self.btn_ollama.setEnabled(True)
+
+    def set_installing(self, is_ollama=False):
         self._progress.show()
-        self._progress.setValue(pct)
         self._spinner_lbl.show()
-        self._action_btn.setEnabled(False)
-        self._action_btn.setText("설치 중…")
+        if is_ollama:
+            self.btn_ollama.setEnabled(False)
+            self.btn_ollama.setText("풀링 중…")
+        else:
+            self.btn_gguf.setEnabled(False)
+            self.btn_gguf.setText("다운로드 중…")
 
     def set_installed(self):
         self._progress.hide()
         self._spinner_lbl.hide()
-        self._action_btn.setText("▶ 선택")
-        self._action_btn.setObjectName("SelectBtn")
-        self._action_btn.setEnabled(True)
-        # reconnect
-        try:
-            self._action_btn.clicked.disconnect()
-        except Exception:
-            pass
-        self._action_btn.clicked.connect(
-            lambda: self.select_clicked.emit(self._info["ollama_tag"])
-        )
-        self.style().unpolish(self._action_btn)
-        self.style().polish(self._action_btn)
-
-    def set_failed(self):
-        self._progress.hide()
-        self._spinner_lbl.hide()
-        self._action_btn.setText("재시도")
-        self._action_btn.setObjectName("InstallBtn")
-        self._action_btn.setEnabled(True)
-        try:
-            self._action_btn.clicked.disconnect()
-        except Exception:
-            pass
-        self._action_btn.clicked.connect(
-            lambda: self.install_clicked.emit(self._info)
-        )
-        self.style().unpolish(self._action_btn)
-        self.style().polish(self._action_btn)
-
+        # 상태 업데이트는 Dialog에서 _update_card_statuses()를 호출하여 처리됩니다.
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Main Dialog
@@ -487,7 +357,7 @@ class ModelCard(QFrame):
 class ModelGalleryDialog(QDialog):
     """모델 갤러리 모달."""
 
-    model_selected = Signal(str)   # ollama_tag
+    model_selected = Signal(str, str) # name, engine_type
 
     def __init__(self, current_model: str = "", parent=None):
         super().__init__(parent)
@@ -504,19 +374,16 @@ class ModelGalleryDialog(QDialog):
         self._spinner_timer = QTimer(self)
         self._spinner_timer.setInterval(300)
         self._spinner_timer.timeout.connect(self._tick_spinners)
+        self._spinner_timer.start()
         self._spinner_idx = 0
         
-        # 초기 상태 업데이트
         QTimer.singleShot(100, self._update_card_statuses)
-
-    # ── Build ─────────────────────────────────────────────────────────────
 
     def _build_ui(self):
         root = QVBoxLayout(self)
         root.setContentsMargins(24, 20, 24, 20)
         root.setSpacing(14)
 
-        # Header
         hdr = QHBoxLayout()
         title = QLabel("🛠️  모델 갤러리")
         title.setStyleSheet("font-size: 20px; font-weight: 800; color: #f1f5f9;")
@@ -528,13 +395,11 @@ class ModelGalleryDialog(QDialog):
         root.addLayout(hdr)
 
         subtitle = QLabel(
-            "아래 모델을 선택하거나 설치하세요. "
-            "설치된 모델만 벤치마크에 사용 가능합니다."
+            "아래 모델을 선택하거나 설치하세요. 설치된 모델만 벤치마크에 사용 가능합니다."
         )
         subtitle.setStyleSheet("color: #64748b; font-size: 11px;")
         root.addWidget(subtitle)
 
-        # Scroll area with cards
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -545,13 +410,9 @@ class ModelGalleryDialog(QDialog):
         content_layout.setContentsMargins(0, 0, 0, 0)
 
         for cat_name, cat_meta in CATEGORY_META.items():
-            # Category group box
-            grp = QGroupBox(
-                f"{cat_meta['icon']}  {cat_name}  —  {cat_meta['desc']}"
-            )
+            grp = QGroupBox(f"{cat_meta['icon']}  {cat_name}  —  {cat_meta['desc']}")
             grp.setStyleSheet(
-                f"QGroupBox {{ border-color: {cat_meta['color']};"
-                f" color: {cat_meta['color']}; }}"
+                f"QGroupBox {{ border-color: {cat_meta['color']}; color: {cat_meta['color']}; }}"
                 f"QGroupBox::title {{ color: {cat_meta['color']}; }}"
             )
             grp_layout = QVBoxLayout(grp)
@@ -561,12 +422,13 @@ class ModelGalleryDialog(QDialog):
                 if info["category"] != cat_name:
                     continue
                 installed  = self._is_installed(info)
-                is_current = info["ollama_tag"] == self._current_model
-                card = ModelCard(info, installed, is_current)
+                is_current = (info["ollama_tag"] == self._current_model) or (info["id"] == self._current_model)
+                card = ModelCard(info, installed, is_current, ollama_on=self._is_ollama_installed(info["ollama_tag"]))
                 card.install_clicked.connect(self._on_install)
                 card.select_clicked.connect(self._on_select)
-                # Ollama 전용 풀링 시그널 연결
-                card.btn_ollama.clicked.disconnect() # 기본 연결 해제
+                
+                try: card.btn_ollama.clicked.disconnect() 
+                except: pass
                 card.btn_ollama.clicked.connect(lambda _, m=info: self._on_ollama_pull(m))
                 
                 self._cards[info["id"]] = card
@@ -578,11 +440,8 @@ class ModelGalleryDialog(QDialog):
         scroll.setWidget(content)
         root.addWidget(scroll, 1)
 
-        # Footer
         footer = QHBoxLayout()
-        self._footer_note = QLabel(
-            f"📁 모델 저장 경로: {MODELS_DIR}"
-        )
+        self._footer_note = QLabel(f"📁 모델 저장 경로: {MODELS_DIR}")
         self._footer_note.setStyleSheet("color: #475569; font-size: 10px;")
         footer.addWidget(self._footer_note)
         footer.addStretch()
@@ -594,64 +453,34 @@ class ModelGalleryDialog(QDialog):
         footer.addWidget(close_btn)
         root.addLayout(footer)
 
-    # ── Helpers ───────────────────────────────────────────────────────────
-
     def _is_installed(self, info: dict) -> bool:
-        """GGUF 파일 존재 여부 확인"""
         path = os.path.join(MODELS_DIR, info["filename"])
         return os.path.isfile(path)
 
     def _is_ollama_installed(self, ollama_tag: str) -> bool:
-        """Ollama API를 통해 모델 설치 여부 확인"""
         models = OllamaClient.list_local_models()
         tags = [m["name"] for m in models]
-        # 태그가 정확히 일치하거나 :latest 등이 붙은 경우 체크
         return ollama_tag in tags or f"{ollama_tag}:latest" in tags
 
-    # ── Slots ─────────────────────────────────────────────────────────────
-
     def _update_card_statuses(self):
-        """모든 카드의 GGUF/Ollama 상태를 새로고침"""
         for mid, card in self._cards.items():
             info = card._info
             gguf_on = self._is_installed(info)
             ollama_on = self._is_ollama_installed(info["ollama_tag"])
-            is_current = info["ollama_tag"] == self._current_model
+            is_current = (info["ollama_tag"] == self._current_model) or (info["id"] == self._current_model)
 
-            # GGUF 버튼 업데이트
-            if gguf_on:
-                card.btn_gguf.setText("📦 있음")
-                card.btn_gguf.setObjectName("SelectBtn")
-                card.gguf_status.setStyleSheet("font-size: 10px; color: #10b981; font-weight: bold;")
-            else:
-                card.btn_gguf.setText("⬇ 다운로드")
-                card.btn_gguf.setObjectName("InstallBtn")
-
-            # Ollama 버튼 업데이트
-            if ollama_on:
-                card.btn_ollama.setText("✅ 사용 가능")
-                card.btn_ollama.setObjectName("SelectBtn")
-                card.ollama_status.setStyleSheet("font-size: 10px; color: #3b82f6; font-weight: bold;")
-            else:
-                card.btn_ollama.setText("⬇ 풀링")
-                card.btn_ollama.setObjectName("InstallBtn")
+            card._update_btn_state(gguf_on, is_current, ollama_on)
 
             if is_current:
-                 card.setStyleSheet("QFrame#ModelCard { background-color: #162032; border: 1.5px solid #3b82f6; border-radius: 10px; }")
-
-            card.style().unpolish(card.btn_gguf)
-            card.style().polish(card.btn_gguf)
-            card.style().unpolish(card.btn_ollama)
-            card.style().polish(card.btn_ollama)
+                card.setStyleSheet("QFrame#ModelCard { background-color: #162032; border: 1.5px solid #3b82f6; border-radius: 10px; }")
+            else:
+                card.setStyleSheet("QFrame#ModelCard { background-color: #162032; border: 1px solid #2d3f55; border-radius: 10px; }")
 
     def _on_install(self, info: dict):
-        # GGUF 다운로드 시작
         model_id = info["id"]
         if model_id in self._workers: return
-        
         card = self._cards[model_id]
-        card._progress.show()
-        
+        card.set_installing(is_ollama=False)
         worker = ModelDownloadWorker(info, MODELS_DIR)
         worker.progress_signal.connect(lambda pct, mid=model_id: self._on_progress(mid, pct))
         worker.done_signal.connect(self._on_done)
@@ -659,14 +488,10 @@ class ModelGalleryDialog(QDialog):
         worker.start()
 
     def _on_ollama_pull(self, info: dict):
-        # Ollama 풀링 시작
         model_id = info["id"]
         if model_id in self._workers: return
-
         card = self._cards[model_id]
-        card._progress.show()
-        card.btn_ollama.setText("풀링 중…")
-
+        card.set_installing(is_ollama=True)
         worker = OllamaPullWorker(info)
         worker.progress_signal.connect(lambda mid, pct: self._on_progress(mid, pct))
         worker.done_signal.connect(self._on_done)
@@ -681,28 +506,23 @@ class ModelGalleryDialog(QDialog):
     def _on_done(self, success: bool, model_id: str):
         self._workers.pop(model_id, None)
         self._update_card_statuses()
+        card = self._cards.get(model_id)
+        if card: card.set_installed()
         if success:
             self._status_lbl.setText(f"✅ {model_id} 설치 완료!")
         else:
             self._status_lbl.setText(f"❌ {model_id} 설치 실패")
 
-    def _on_select(self, ollama_tag: str):
-        self._current_model = ollama_tag
-        self.model_selected.emit(ollama_tag)
+    def _on_select(self, model_name: str, engine_type: str):
+        self._current_model = model_name
+        self.model_selected.emit(model_name, engine_type)
         self.close()
 
     def _tick_spinners(self):
-        frames = ["⏳", "⌛"]
+        frames = ["⏳", "⌛", "⏰", "⏱️"]
         self._spinner_idx = (self._spinner_idx + 1) % len(frames)
-        for model_id, worker in self._workers.items():
-            card = self._cards.get(model_id)
-            if card and hasattr(card, "_spinner_lbl"):
+        for mid, card in self._cards.items():
+            if mid in self._workers:
                 card._spinner_lbl.setText(frames[self._spinner_idx])
-
-    def _show_tray_notification(self, title: str, msg: str):
-        try:
-            tray = QSystemTrayIcon(QApplication.instance())
-            tray.show()
-            tray.showMessage(title, msg, QSystemTrayIcon.Information, 4000)
-        except Exception:
-            pass
+            else:
+                card._spinner_lbl.hide()

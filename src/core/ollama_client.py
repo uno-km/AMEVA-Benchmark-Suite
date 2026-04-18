@@ -1,6 +1,6 @@
 import requests
 import json
-from .constants import OLLAMA_BASE_URL
+from core.constants import OLLAMA_BASE_URL
 
 class OllamaClient:
     """Ollama API 통신을 전담하는 싱글톤 엔진입니다."""

@@ -118,6 +118,7 @@ class AMEVAController(QMainWindow):
         )
 
         self.view_dash.clear_logs()
+        self.view_dash.chat_panel.clear_chat() # 채팅 초기화
         self.stack.setCurrentIndex(1)
         self.view_dash.focus_log_tab()
 
@@ -152,8 +153,15 @@ class AMEVAController(QMainWindow):
         if not self.active_session:
             return
 
-        # 모델명을 DashUI 레이블에서 읽음 (콤보박스 제거)
-        self.active_session.boot_config.model_name = self.view_dash.get_active_model()
+        # 모델명 및 엔진 동기화 (레이블 기반)
+        model_name = self.view_dash.get_active_model()
+        if not model_name:
+            self.view_dash.show_toast("🚨 실행 전 모델을 먼저 선택해주세요!")
+            self.view_dash._open_model_gallery()
+            return
+
+        self.active_session.boot_config.model_name = model_name
+        self.active_session.boot_config.engine     = self.view_dash.get_active_engine()
         self.active_session.run_mode               = self.view_dash.mode_combo.currentText()
         self.active_session.judge_key              = self.view_dash.api_key_input.text().strip()
 
@@ -213,8 +221,15 @@ class AMEVAController(QMainWindow):
             self.view_dash.show_toast("⏳ 이전 채팅 추론이 진행 중입니다.")
             return
 
-        # 세션 모델명 동기화
-        self.active_session.boot_config.model_name = self.view_dash.get_active_model()
+        # 세션 모델명 및 엔진 동기화
+        model_name = self.view_dash.get_active_model()
+        if not model_name:
+            self.view_dash.show_toast("🚨 채팅 전 모델을 먼저 선택해주세요!")
+            self.view_dash._open_model_gallery()
+            return
+
+        self.active_session.boot_config.model_name = model_name
+        self.active_session.boot_config.engine     = self.view_dash.get_active_engine()
         self.active_session.judge_key = self.view_dash.api_key_input.text().strip()
 
         # AI 말풍선 미리 생성 (스트리밍 청크가 여기에 쌓임)

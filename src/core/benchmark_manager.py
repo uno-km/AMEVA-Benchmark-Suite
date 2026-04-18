@@ -5,13 +5,15 @@ import re
 from datetime import datetime
 from openai import OpenAI
 import psutil
+import requests
 
 from ui.qt_bridge import *
 from .ollama_client import OllamaClient
-from .constants import OLLAMA_BASE_URL, LLAMA_CPP_PORT
+from .constants import OLLAMA_BASE_URL, LLAMA_CPP_HOST, LLAMA_CPP_PORT
 from models.settings import BenchmarkSession
 from models.hardware import HardwareService
 from core.prompt_utils import format_chatml, get_stop_tokens
+from .judge_service import JudgeService
 
 def _ts() -> str:
     now = datetime.now()
@@ -95,62 +97,13 @@ class ExecutionEngine(QThread):
         self.log_signal.emit(msg)
 
     def _call_llm_judge(self, prompt: str, response: str) -> dict:
-        """[Engineering] 판정관 시스템: 로컬(Ollama) 또는 원격(OpenAI) AI가 결과를 채점합니다."""
-        sc = self.session.stress_config
-        judge_model = sc.judge_model
-        
-        system_prompt = (
-            "You are an expert AI Benchmark Judge. Evaluate the Quality of the USER_RESPONSE based on the PROMPT.\n"
-            "Score from 0 to 10. Output MUST be valid JSON: {\"score\": 8, \"reason\": \"...\"}\n"
-            "Language: Answer 'reason' in KOREAN."
+        """[Engineering] 판정관 서비스 대행."""
+        return JudgeService.call_llm_judge(
+            prompt, 
+            response, 
+            self.session.stress_config,
+            chunk_callback=self.chunk_signal.emit
         )
-        user_content = f"PROMPT: {prompt}\nUSER_RESPONSE: {response}"
-
-        # 1. 로컬 판정 (Ollama) - GPT 모델명이 아닌 경우
-        if ":" in judge_model or "exaone" in judge_model.lower() or "qwen" in judge_model.lower():
-            try:
-                self.chunk_signal.emit(f"\n\n--- 🧠 Local Judge Thought ({judge_model}) ---\n")
-                
-                messages = [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_content}
-                ]
-                
-                full_reason = ""
-                # OllamaClient 활용
-                resp = OllamaClient.chat_stream(judge_model, messages, options={"temperature": 0.0})
-                
-                for line in resp.iter_lines():
-                    if line:
-                        chunk = json.loads(line)
-                        content = chunk.get("message", {}).get("content", "")
-                        full_reason += content
-                        self.chunk_signal.emit(content) # 스트리밍 탭으로 전송
-                
-                # 결과 파싱
-                return json.loads(full_reason)
-            except Exception as e:
-                self._log(f"⚠ 로컬 판정 실패: {e}")
-                return {"score": 0, "reason": f"Error: {e}"}
-
-        # 2. 원격 판정 (OpenAI)
-        else:
-            try:
-                api_key = self.session.stress_config.system_prompt # API KEY 필드 대용 (임시)
-                # 실제 운영 시엔 별도 API KEY 필드 사용 권장
-                client = OpenAI(api_key=api_key)
-                res = client.chat.completions.create(
-                    model=judge_model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_content}
-                    ],
-                    response_format={ "type": "json_object" }
-                )
-                return json.loads(res.choices[0].message.content)
-            except Exception as e:
-                self._log(f"⚠ 원격 판정 실패: {e}")
-                return {"score": 0, "reason": "API Key error or connection failed."}
 
     def _post_stream_with_fallback(self, base_url: str, payload: dict, engine_type: str):
         endpoints = [base_url]

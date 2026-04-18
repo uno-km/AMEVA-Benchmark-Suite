@@ -11,7 +11,7 @@ class ReportManager:
         "Prompt_Text", "Prompt_Response",
         "TTFT (ms)", "Prompt_Eval (ms/t)", "Avg_GPU_W", "Tokens_per_Joule", 
         "E2E_Latency", "Generation (t/s)", "Peak_VRAM_MB", "System_Load", 
-        "Warm/Cold_Tag", "Sampling_Time (ms)", "Judge_Score", "Metric_Source (bench/srv)"
+        "Warm/Cold_Tag", "Sampling_Time (ms)", "Judge_Score", "Judge_Reason", "Metric_Source (bench/srv)"
     ]
 
     def __init__(self, db_path: str = "Edge_v5_Singularity_Report.csv"):
