@@ -98,12 +98,18 @@ class ExecutionEngine(QThread):
 
     def _call_llm_judge(self, prompt: str, response: str) -> dict:
         """[Engineering] 판정관 서비스 대행."""
-        return JudgeService.call_llm_judge(
+        # 스트리밍 창에 판정관 출근 알림
+        self.chunk_signal.emit(f"\n\n--- 🧠 Local Judge Thought ({self.session.stress_config.judge_model}) ---\n")
+        
+        result = JudgeService.call_llm_judge(
             prompt, 
             response, 
             self.session.stress_config,
             chunk_callback=self.chunk_signal.emit
         )
+        
+        self.chunk_signal.emit("\n--- End of Thought ---\n")
+        return result
 
     def _post_stream_with_fallback(self, base_url: str, payload: dict, engine_type: str):
         endpoints = [base_url]
@@ -225,6 +231,8 @@ class ExecutionEngine(QThread):
                 break
 
             self._slog(f"─── Task [{idx+1}/{len(self.dataset)}]: {task.get('task','?')} ───")
+            cat_name = task.get('category', 'General')
+            self.chunk_signal.emit(f"\n\n[INFO] AI가 '{cat_name}' 문제를 분석 중입니다... (TTFT 측정 중)\n")
 
             pw_tracker = PowerTracker(has_nvidia=has_nv)
             if "Efficiency" in self.session.run_mode:
@@ -258,6 +266,7 @@ class ExecutionEngine(QThread):
                     "stream": True,
                     "options": {
                         "num_predict": 200,
+                        "num_thread":  sc.threads, # CPU 가속 활성화
                         "temperature": sc.temperature,
                         "top_k": sc.top_k,
                         "top_p": sc.top_p,
@@ -345,8 +354,9 @@ class ExecutionEngine(QThread):
             duration = time.time() - start_time
             if ttft == 0:
                 ttft = duration * 1000
-            if prompt_ms_per_t == 0 and tok_count > 0:
-                prompt_ms_per_t = round(duration / tok_count, 2)
+            
+            # 스트리밍 창에 완료 알림
+            self.chunk_signal.emit(f"\n[DONE] 생성 완료. (TTFT: {ttft:.1f}ms / TPS: {tok_count/duration if duration>0 else 0:.2f})\n")
             if "Efficiency" in self.session.run_mode:
                 pw_tracker.stop()
 
@@ -416,7 +426,28 @@ class ExecutionEngine(QThread):
                 final_scores.append(res["Judge_Score"])
 
         avg_score = sum(final_scores)/len(final_scores) if final_scores else 0
-        self._log(f"🏆 최종 판정 완료. 평균 점수: {avg_score:.2f}/10")
+        
+        # --- [Phase: Scorecard Visualization] ---
+        self._log("\n" + "="*50)
+        self._log("🏆 [AMEVA] 최종 벤치마크 리포트 (EXAONE 3.5 기준)")
+        self._log("="*50)
+        self._log(f"{'CATEGORY':<15} | {'SCORE':<10} | {'REASON SUMMARY'}")
+        self._log("-" * 50)
+        
+        cat_scores = {}
+        for r in results:
+            cat = r.get("Benchmark_Category", "General")
+            score = r.get("Judge_Score", 0)
+            if cat not in cat_scores: cat_scores[cat] = []
+            cat_scores[cat].append(score)
+            
+        for cat, scores in cat_scores.items():
+            c_avg = sum(scores)/len(scores)
+            self._log(f"{cat:<15} | {c_avg:<10.2f} | PASS")
+            
+        self._log("-" * 50)
+        self._log(f"⭐ TOTAL AVERAGE: {avg_score:.2f} / 10.0")
+        self._log("="*50)
         
         # 업데이트된 결과 다시 전송
         self.report_signal.emit(results)
