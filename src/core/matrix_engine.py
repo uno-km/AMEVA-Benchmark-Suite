@@ -57,10 +57,10 @@ class MatrixEngine:
 
             # Volumes
             models_dir = os.path.abspath(
-                os.path.join(os.path.dirname(__file__), "..", "..", "models")
+                os.path.join(os.path.dirname(__file__), "..", "..", "ai_vault")
             )
             os.makedirs(models_dir, exist_ok=True)
-            volumes = {models_dir: {'bind': '/models', 'mode': 'rw'}}
+            volumes = {models_dir: {'bind': '/vault', 'mode': 'rw'}}
             self._log(f"· 볼륨 마운트 준비: {models_dir} → /models")
 
             # GPU
@@ -192,7 +192,7 @@ class MatrixEngine:
                 model_file += ".gguf"
             threads = options.get('threads', 4)
             n_ctx = options.get('n_ctx', 2048)
-            cmd = f"llama-bench -m /models/{model_file} -t {threads} -c {n_ctx} --output-json"
+            cmd = f"llama-bench -m /vault/{model_file} -t {threads} -c {n_ctx} --output-json"
             self._log(f"[스트레스] 실행 중: {cmd}")
             exit_code, output = self.container.exec_run(cmd)
             if exit_code == 0:

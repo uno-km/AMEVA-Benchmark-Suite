@@ -173,6 +173,20 @@ class DashUI(QWidget):
         self.api_key_input.setFixedWidth(150)
         cl.addWidget(self.api_key_input)
 
+        # ── Judge 선택 ────────────────────────────────────────────────
+        self.judge_combo = QComboBox()
+        self.judge_combo.addItems([
+            "exaone3:7.8b",
+            "qwen2.5:3b",
+            "llama3.2:3b",
+            "gpt-4o-mini"
+        ])
+        self.judge_combo.setFixedWidth(110)
+        self.judge_combo.setToolTip("결과를 채점할 AI 판정관 모델 선택")
+        self.judge_combo.currentIndexChanged.connect(self._on_judge_change)
+        cl.addWidget(QLabel("Judge:"))
+        cl.addWidget(self.judge_combo)
+
         # ── 채팅 토글 버튼 ───────────────────────────────────────────────
         self.btn_chat = QPushButton("🗨️ 대화형 벤치마크")
         self.btn_chat.setObjectName("ChatToggleBtn")
@@ -632,6 +646,12 @@ class DashUI(QWidget):
             ma_curve.setData([], [])
         if not self._user_panned and x_data:
             self._set_plot_xrange(plot, max(0, x_data[-1] - self._HISTORY), x_data[-1])
+
+    def _on_judge_change(self):
+        if self.ctrl.active_session:
+            model = self.judge_combo.currentText()
+            self.ctrl.active_session.stress_config.judge_model = model
+            self.log_bench(f"⚖️ 판정관 변경됨: {model}")
 
     def append_stream(self, text: str):
         """실시간 스트리밍 탭에 텍스트 청크 추가"""

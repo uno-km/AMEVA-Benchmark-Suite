@@ -21,7 +21,7 @@ from PySide6.QtGui import QFont, QColor, QIcon, QMovie
 # ─────────────────────────────────────────────────────────────────────────────
 
 MODELS_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models_gguf"
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ai_vault"
 )
 
 MODEL_CATALOGUE = [
@@ -200,6 +200,50 @@ class ModelDownloadWorker(QThread):
             self.done_signal.emit(False, model_id)
 
 
+class OllamaPullWorker(QThread):
+    """Ollama API를 통해 모델을 풀링하는 워커."""
+    progress_signal = Signal(str, int)     # model_id, pct
+    done_signal     = Signal(bool, str)    # success, model_id
+    log_signal      = Signal(str)
+
+    def __init__(self, model_info: dict):
+        super().__init__()
+        self._info = model_info
+
+    def run(self):
+        tag = self._info["ollama_tag"]
+        model_id = self._info["id"]
+        url = "http://127.0.0.1:11434/api/pull"
+        
+        try:
+            self.log_signal.emit(f"[OLM] 풀링 시작: {tag}")
+            resp = requests.post(url, json={"name": tag}, stream=True, timeout=60)
+            resp.raise_for_status()
+
+            for line in resp.iter_lines():
+                if self.isInterruptionRequested():
+                    self.done_signal.emit(False, model_id)
+                    return
+                if line:
+                    data = json.loads(line)
+                    status = data.get("status", "")
+                    total = data.get("total", 0)
+                    completed = data.get("completed", 0)
+                    
+                    if total > 0:
+                        pct = int(completed / total * 100)
+                        self.progress_signal.emit(model_id, pct)
+                    
+                    if status == "success":
+                        self.log_signal.emit(f"[OLM] 완료: {tag}")
+                        self.done_signal.emit(True, model_id)
+                        return
+
+        except Exception as e:
+            self.log_signal.emit(f"[OLM] 에러: {e}")
+            self.done_signal.emit(False, model_id)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Gallery Style
 # ─────────────────────────────────────────────────────────────────────────────
@@ -351,29 +395,43 @@ class ModelCard(QFrame):
 
         row.addLayout(info_col, 1)
 
-        # Right: progress + button
-        right_col = QVBoxLayout()
-        right_col.setSpacing(4)
-        right_col.setAlignment(Qt.AlignCenter)
+        # Right: Buttons for GGUF & Ollama
+        btn_layout = QVBoxLayout()
+        btn_layout.setSpacing(6)
 
+        # GGUF Block
+        gguf_row = QHBoxLayout()
+        self.gguf_status = QLabel("📦 GGUF")
+        self.gguf_status.setStyleSheet("font-size: 10px; color: #64748b;")
+        self.btn_gguf = QPushButton("⬇ 다운로드")
+        self.btn_gguf.setObjectName("InstallBtn")
+        self.btn_gguf.setFixedWidth(85)
+        self.btn_gguf.clicked.connect(lambda: self.install_clicked.emit(self._info))
+        gguf_row.addWidget(self.gguf_status)
+        gguf_row.addStretch()
+        gguf_row.addWidget(self.btn_gguf)
+        btn_layout.addLayout(gguf_row)
+
+        # Ollama Block
+        ollama_row = QHBoxLayout()
+        self.ollama_status = QLabel("🦙 Ollama")
+        self.ollama_status.setStyleSheet("font-size: 10px; color: #64748b;")
+        self.btn_ollama = QPushButton("⬇ 풀링")
+        self.btn_ollama.setObjectName("InstallBtn")
+        self.btn_ollama.setFixedWidth(85)
+        self.btn_ollama.clicked.connect(lambda: self.select_clicked.emit(self._info["ollama_tag"])) # 임시
+        ollama_row.addWidget(self.ollama_status)
+        ollama_row.addStretch()
+        ollama_row.addWidget(self.btn_ollama)
+        btn_layout.addLayout(ollama_row)
+
+        # Global Progress (Shared or separate?) - For now, show in the row
         self._progress = QProgressBar()
-        self._progress.setFixedWidth(90)
-        self._progress.setValue(0)
+        self._progress.setFixedHeight(4)
         self._progress.hide()
-        right_col.addWidget(self._progress)
+        btn_layout.addWidget(self._progress)
 
-        self._spinner_lbl = QLabel("⏳")
-        self._spinner_lbl.setAlignment(Qt.AlignCenter)
-        self._spinner_lbl.setStyleSheet("font-size: 18px;")
-        self._spinner_lbl.hide()
-        right_col.addWidget(self._spinner_lbl)
-
-        self._action_btn = QPushButton()
-        self._action_btn.setFixedWidth(90)
-        self._update_btn_state(installed, is_current)
-        right_col.addWidget(self._action_btn)
-
-        row.addLayout(right_col)
+        row.addLayout(btn_layout)
 
     def _update_btn_state(self, installed: bool, is_current: bool):
         if is_current:
@@ -459,6 +517,9 @@ class ModelGalleryDialog(QDialog):
         self._spinner_timer.setInterval(300)
         self._spinner_timer.timeout.connect(self._tick_spinners)
         self._spinner_idx = 0
+        
+        # 초기 상태 업데이트
+        QTimer.singleShot(100, self._update_card_statuses)
 
     # ── Build ─────────────────────────────────────────────────────────────
 
@@ -516,6 +577,10 @@ class ModelGalleryDialog(QDialog):
                 card = ModelCard(info, installed, is_current)
                 card.install_clicked.connect(self._on_install)
                 card.select_clicked.connect(self._on_select)
+                # Ollama 전용 풀링 시그널 연결
+                card.btn_ollama.clicked.disconnect() # 기본 연결 해제
+                card.btn_ollama.clicked.connect(lambda _, m=info: self._on_ollama_pull(m))
+                
                 self._cards[info["id"]] = card
                 grp_layout.addWidget(card)
 
@@ -544,63 +609,103 @@ class ModelGalleryDialog(QDialog):
     # ── Helpers ───────────────────────────────────────────────────────────
 
     def _is_installed(self, info: dict) -> bool:
+        """GGUF 파일 존재 여부 확인"""
         path = os.path.join(MODELS_DIR, info["filename"])
         return os.path.isfile(path)
 
+    def _is_ollama_installed(self, ollama_tag: str) -> bool:
+        """Ollama API를 통해 모델 설치 여부 확인"""
+        try:
+            resp = requests.get("http://127.0.0.1:11434/api/tags", timeout=1)
+            if resp.status_code == 200:
+                tags = [m["name"] for m in resp.json().get("models", [])]
+                # 태그가 정확히 일치하거나 :latest 등이 붙은 경우 체크
+                return ollama_tag in tags or f"{ollama_tag}:latest" in tags
+        except:
+            pass
+        return False
+
     # ── Slots ─────────────────────────────────────────────────────────────
 
+    def _update_card_statuses(self):
+        """모든 카드의 GGUF/Ollama 상태를 새로고침"""
+        for mid, card in self._cards.items():
+            info = card._info
+            gguf_on = self._is_installed(info)
+            ollama_on = self._is_ollama_installed(info["ollama_tag"])
+            is_current = info["ollama_tag"] == self._current_model
+
+            # GGUF 버튼 업데이트
+            if gguf_on:
+                card.btn_gguf.setText("📦 있음")
+                card.btn_gguf.setObjectName("SelectBtn")
+                card.gguf_status.setStyleSheet("font-size: 10px; color: #10b981; font-weight: bold;")
+            else:
+                card.btn_gguf.setText("⬇ 다운로드")
+                card.btn_gguf.setObjectName("InstallBtn")
+
+            # Ollama 버튼 업데이트
+            if ollama_on:
+                card.btn_ollama.setText("✅ 사용 가능")
+                card.btn_ollama.setObjectName("SelectBtn")
+                card.ollama_status.setStyleSheet("font-size: 10px; color: #3b82f6; font-weight: bold;")
+            else:
+                card.btn_ollama.setText("⬇ 풀링")
+                card.btn_ollama.setObjectName("InstallBtn")
+
+            if is_current:
+                 card.setStyleSheet("QFrame#ModelCard { background-color: #162032; border: 1.5px solid #3b82f6; border-radius: 10px; }")
+
+            card.style().unpolish(card.btn_gguf)
+            card.style().polish(card.btn_gguf)
+            card.style().unpolish(card.btn_ollama)
+            card.style().polish(card.btn_ollama)
+
     def _on_install(self, info: dict):
+        # GGUF 다운로드 시작
         model_id = info["id"]
-        if model_id in self._workers:
-            return  # 이미 진행 중
-
-        card = self._cards.get(model_id)
-        if card:
-            card.set_installing(0)
-
+        if model_id in self._workers: return
+        
+        card = self._cards[model_id]
+        card._progress.show()
+        
         worker = ModelDownloadWorker(info, MODELS_DIR)
-        worker.progress_signal.connect(
-            lambda pct, mid=model_id: self._on_progress(mid, pct)
-        )
+        worker.progress_signal.connect(lambda pct, mid=model_id: self._on_progress(mid, pct))
         worker.done_signal.connect(self._on_done)
-        worker.log_signal.connect(lambda msg: self._status_lbl.setText(msg[-60:]))
         self._workers[model_id] = worker
         worker.start()
 
-        if not self._spinner_timer.isActive():
-            self._spinner_timer.start()
+    def _on_ollama_pull(self, info: dict):
+        # Ollama 풀링 시작
+        model_id = info["id"]
+        if model_id in self._workers: return
 
-        self._status_lbl.setText(f"⬇ {info['display']} 다운로드 중…")
+        card = self._cards[model_id]
+        card._progress.show()
+        card.btn_ollama.setText("풀링 중…")
+
+        worker = OllamaPullWorker(info)
+        worker.progress_signal.connect(lambda mid, pct: self._on_progress(mid, pct))
+        worker.done_signal.connect(self._on_done)
+        self._workers[model_id] = worker
+        worker.start()
 
     def _on_progress(self, model_id: str, pct: int):
         card = self._cards.get(model_id)
         if card:
-            card.set_installing(pct)
+            card._progress.setValue(pct)
 
     def _on_done(self, success: bool, model_id: str):
         self._workers.pop(model_id, None)
-        card = self._cards.get(model_id)
-
+        self._update_card_statuses()
         if success:
-            if card:
-                card.set_installed()
-            self._status_lbl.setText("✅ 설치 완료!")
-            self._show_tray_notification(
-                f"모델 설치 완료",
-                f"{model_id} 모델이 성공적으로 설치되었습니다."
-            )
+            self._status_lbl.setText(f"✅ {model_id} 설치 완료!")
         else:
-            if card:
-                card.set_failed()
-            self._status_lbl.setText("❌ 설치 실패 – 네트워크를 확인하세요.")
-
-        if not self._workers:
-            self._spinner_timer.stop()
+            self._status_lbl.setText(f"❌ {model_id} 설치 실패")
 
     def _on_select(self, ollama_tag: str):
         self._current_model = ollama_tag
         self.model_selected.emit(ollama_tag)
-        self._status_lbl.setText(f"✅ 선택됨: {ollama_tag}")
         self.close()
 
     def _tick_spinners(self):

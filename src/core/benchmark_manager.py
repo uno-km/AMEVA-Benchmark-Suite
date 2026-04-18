@@ -8,6 +8,7 @@ from openai import OpenAI
 from PySide6.QtCore import QThread, Signal
 from models.settings import BenchmarkSession
 from models.hardware import HardwareService
+from core.prompt_utils import format_chatml
 
 
 def _ts() -> str:
@@ -91,23 +92,65 @@ class ExecutionEngine(QThread):
     def _log(self, msg: str):
         self.log_signal.emit(msg)
 
-    def _call_llm_judge(self, prompt: str, response_text: str) -> str:
-        if not self.session.judge_key:
-            return "건너뜀 (API 키 없음)"
-        try:
-            client = OpenAI(api_key=self.session.judge_key)
-            judge_prompt = (
-                f"프롬프트: {prompt}\n응답: {response_text}\n"
-                "'PASS' 또는 'FAIL' 중 하나만 출력하세요."
-            )
-            res = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": judge_prompt}],
-                max_tokens=10, temperature=0.0
-            )
-            return res.choices[0].message.content.strip()
-        except Exception as e:
-            return f"판정_에러: {e}"
+    def _call_llm_judge(self, prompt: str, response: str) -> dict:
+        """[Engineering] 판정관 시스템: 로컬(Ollama) 또는 원격(OpenAI) AI가 결과를 채점합니다."""
+        sc = self.session.stress_config
+        judge_model = sc.judge_model
+        
+        system_prompt = (
+            "You are an expert AI Benchmark Judge. Evaluate the Quality of the USER_RESPONSE based on the PROMPT.\n"
+            "Score from 0 to 10. Output MUST be valid JSON: {\"score\": 8, \"reason\": \"...\"}\n"
+            "Language: Answer 'reason' in KOREAN."
+        )
+        user_content = f"PROMPT: {prompt}\nUSER_RESPONSE: {response}"
+
+        # 1. 로컬 판정 (Ollama) - GPT 모델명이 아닌 경우
+        if ":" in judge_model or "exaone" in judge_model.lower() or "qwen" in judge_model.lower():
+            try:
+                self.chunk_signal.emit(f"\n\n--- 🧠 Local Judge Thought ({judge_model}) ---\n")
+                url = "http://127.0.0.1:11434/api/chat"
+                payload = {
+                    "model": judge_model,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_content}
+                    ],
+                    "stream": True,
+                    "format": "json"
+                }
+                full_reason = ""
+                resp = requests.post(url, json=payload, stream=True, timeout=60)
+                for line in resp.iter_lines():
+                    if line:
+                        chunk = json.loads(line)
+                        content = chunk.get("message", {}).get("content", "")
+                        full_reason += content
+                        self.chunk_signal.emit(content) # 스트리밍 탭으로 전송
+                
+                # 결과 파싱
+                return json.loads(full_reason)
+            except Exception as e:
+                self._log(f"⚠ 로컬 판정 실패: {e}")
+                return {"score": 0, "reason": f"Error: {e}"}
+
+        # 2. 원격 판정 (OpenAI)
+        else:
+            try:
+                api_key = self.session.stress_config.system_prompt # API KEY 필드 대용 (임시)
+                # 실제 운영 시엔 별도 API KEY 필드 사용 권장
+                client = OpenAI(api_key=api_key)
+                res = client.chat.completions.create(
+                    model=judge_model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_content}
+                    ],
+                    response_format={ "type": "json_object" }
+                )
+                return json.loads(res.choices[0].message.content)
+            except Exception as e:
+                self._log(f"⚠ 원격 판정 실패: {e}")
+                return {"score": 0, "reason": "API Key error or connection failed."}
 
     def _post_stream_with_fallback(self, base_url: str, payload: dict, engine_type: str):
         endpoints = [base_url]
@@ -358,14 +401,13 @@ class ExecutionEngine(QThread):
 
             # [Engineering] CSV 설정에 따른 자동 채점 분기 처리 (Regex vs LLM Judge)
             eval_type = task.get('eval_type', 'llm_judge')
+            score = "N/A"
             if eval_type == 'regex':
                 pattern = task.get('expected_regex', '')
                 if pattern and re.search(pattern, text_acc):
                     score = "PASS (Regex)"
                 else:
                     score = "FAIL (Regex)"
-            else:
-                score = self._call_llm_judge(task.get('prompt', ''), text_acc)
 
             avg_watts = pw_tracker.get_average_watts()
             tps_val = round(tok_count / duration, 2) if duration > 0 else 0
@@ -392,7 +434,34 @@ class ExecutionEngine(QThread):
                 "Warm/Cold_Tag":      "WARM",
                 "Sampling_Time (ms)": round(sample_ms, 2),
                 "Judge_Score":        score,
-                "Metric_Source (bench/srv)": "srv"
+                "Metric_Source (bench/srv)": "srv",
+                "eval_type":          eval_type,
+                "prompt":             task.get('prompt', ''),
+                "response":           text_acc
             })
 
+        self._log("✓ 벤치마크 추론 시퀀스 완료.")
+
+        # --- [Phase: Resourcing] ---
+        # 저사양 환경을 위해 판정 전 메인 엔진 리소스 명시적 해제
+        self._log("⚙️  판정 전 리소스 최적화: 메인 엔진 언로드 시퀀스...")
+        if hasattr(self.engine_core, "shutdown"):
+            self.engine_core.shutdown()
+        time.sleep(1.0) # OS 레벨 RAM 반납 대기
+
+        self._log(f"🧠 판정관 가동: {self.session.stress_config.judge_model}")
+        
+        # --- [Phase: Judging] ---
+        final_scores = []
+        for res in results:
+            if res.get("eval_type") == "llm_judge":
+                score_data = self._call_llm_judge(res["prompt"], res["response"])
+                res["score_judge"] = score_data.get("score", 0)
+                res["reason"] = score_data.get("reason", "No reason provided.")
+                final_scores.append(res["score_judge"])
+
+        avg_score = sum(final_scores)/len(final_scores) if final_scores else 0
+        self._log(f"🏆 최종 판정 완료. 평균 점수: {avg_score:.2f}/10")
+        
+        # 업데이트된 결과 다시 전송
         self.report_signal.emit(results)
