@@ -78,15 +78,15 @@ MODEL_CATALOGUE = [
     # ── Heavy ─────────────────────────────────────────────────── RAM 8GB+
     {
         "id":          "exaone-7.8b",
-        "display":     "EXAONE-3.0-7.8B-Instruct",
+        "display":     "EXAONE-3.5-7.8B-Instruct",
         "category":    "Heavy",
         "tag":         "🇰🇷 한국어 뉘앙스 · 최고 성능",
-        "desc":        "LG AI Research 7.8B 한국어 1위 모델. 문맥·뉘앙스·존댓말 완벽 이해.",
+        "desc":        "LG AI Research 7.8B 한국어 최신 모델. 문맥·뉘앙스·존댓말 완벽 이해.",
         "min_ram_gb":  8,
         "size_gb":     4.8,
-        "filename":    "EXAONE-3.0-7.8B-Instruct-Q4_K_M.gguf",
+        "filename":    "EXAONE-3.5-7.8B-Instruct-Q4_K_M.gguf",
         "hf_url":      "https://huggingface.co/bartowski/EXAONE-3.0-7.8B-Instruct-GGUF/resolve/main/EXAONE-3.0-7.8B-Instruct-Q4_K_M.gguf",
-        "ollama_tag":  "exaone3:7.8b",
+        "ollama_tag":  "exaone3.5:7.8b",
     },
     {
         "id":          "kullm3-8b",

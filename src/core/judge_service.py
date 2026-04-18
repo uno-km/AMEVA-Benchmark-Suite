@@ -80,7 +80,10 @@ class JudgeService:
 
     @staticmethod
     def _extract_json(text: str) -> str:
-        """텍스트에서 첫 번째 {...} 블록을 추출합니다."""
+        """텍스트에서 첫 번째 {...} 블록을 안전하게 추출합니다."""
         import re
-        match = re.search(r'\{.*\}', text, re.DOTALL)
-        return match.group(0) if match else None
+        # 마크다운 블록 등을 고려하여 가장 바깥쪽 중괄호 쌍을 찾음
+        match = re.search(r'(\{.*\})', text, re.DOTALL)
+        if match:
+             return match.group(1).strip()
+        return None

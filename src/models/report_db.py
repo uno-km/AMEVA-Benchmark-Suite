@@ -7,7 +7,7 @@ class ReportManager:
     """[V5.5] CSV Database Manager - Handles reporting as a structured database."""
     
     SCHEMA = [
-        "Timestamp", "Model_Hash", "Quant_Method", "Context_Size", "Thread_Config", 
+        "Timestamp", "Model_Hash", "Benchmark_Category", "Quant_Method", "Context_Size", "Thread_Config", 
         "Prompt_Text", "Prompt_Response",
         "TTFT (ms)", "Prompt_Eval (ms/t)", "Avg_GPU_W", "Tokens_per_Joule", 
         "E2E_Latency", "Generation (t/s)", "Peak_VRAM_MB", "System_Load", 

@@ -92,7 +92,10 @@ class OllamaPullWorker(QThread):
                 if self.isInterruptionRequested():
                     self.done_signal.emit(False, model_id)
                     return
-                if line:
+                if not line:
+                    continue
+                
+                try:
                     data = json.loads(line)
                     status = data.get("status", "")
                     total = data.get("total", 0)
@@ -100,12 +103,17 @@ class OllamaPullWorker(QThread):
                     
                     if total > 0:
                         pct = int(completed / total * 100)
-                        self.progress_signal.emit(model_id, pct)
+                        self.progress_signal.emit(model_id, int(pct))
+                    elif "manifest" in status.lower():
+                        # 매니페스트 단계에서는 1%로 표시하여 먹통 아님을 알림
+                        self.progress_signal.emit(model_id, 1)
                     
                     if status == "success":
                         self.log_signal.emit(f"[OLM] 완료: {tag}")
                         self.done_signal.emit(True, model_id)
                         return
+                except:
+                    continue # JSON 파싱 실패 시 무시하고 다음 줄
 
         except Exception as e:
             self.log_signal.emit(f"[OLM] 에러: {e}")

@@ -82,10 +82,10 @@ class AMEVAStatusBar(QStatusBar):
         self.dl_lbl.setStyleSheet("color: #60a5fa; font-size: 10px; font-weight: 700;")
         
         self.dl_bar = QProgressBar()
-        self.dl_bar.setFixedSize(120, 6)
+        self.dl_bar.setFixedSize(120, 8) # 조금 더 여유 있게
         self.dl_bar.setTextVisible(False)
         self.dl_bar.setStyleSheet(
-            "QProgressBar { background-color: #0f172a; border: 1px solid #334155; border-radius: 3px; }"
+            "QProgressBar { background-color: #0f172a; border: 1px solid #334155; border-radius: 3px; font-size: 8px; }"
             "QProgressBar::chunk { background-color: #3b82f6; border-radius: 2px; }"
         )
         

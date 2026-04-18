@@ -56,6 +56,7 @@ class AMEVAController(QMainWindow):
         self.active_runner  = None
         self._boot_thread   = None
         self._chat_runner   = None
+        self._last_booted_model = "" # 엔진 스왑 감지용
         self._dl_workers    = {} # 백그라운드 다운로드 일꾼 저장소
 
         # ── 내비게이션 스택 ───────────────────────────────────────────────
@@ -143,6 +144,8 @@ class AMEVAController(QMainWindow):
 
     def _on_boot_done(self, success: bool, msg: str):
         if success:
+            # 마지막으로 성공적으로 부팅된 모델명 기록
+            self._last_booted_model = self.active_session.boot_config.model_name
             self.view_dash.update_engine_status(msg)
             self.view_dash.log_sys(f"✅ 부팅 완료: {msg}")
             self.view_dash.show_toast("커널 온라인. 안전하게 연결되었습니다.")
@@ -169,6 +172,13 @@ class AMEVAController(QMainWindow):
         self.active_session.boot_config.engine     = self.view_dash.get_active_engine()
         self.active_session.run_mode               = self.view_dash.mode_combo.currentText()
         self.active_session.judge_key              = self.view_dash.api_key_input.text().strip()
+
+        # [Smart SWAP] 엔진/모델 변경 시 자동 재부팅
+        if self._last_booted_model != model_name:
+            self.view_dash.log_sys(f"🔄 스왑 필요: {self._last_booted_model} -> {model_name}")
+            self.execute_boot_sequence(self.active_session)
+            self.view_dash.show_toast("엔진 모델을 교체 중입니다. 완료 후 다시 RUN을 눌러주세요.")
+            return
 
         harness = self._load_harness_data()
         if not harness:
@@ -236,6 +246,13 @@ class AMEVAController(QMainWindow):
         self.active_session.boot_config.model_name = model_name
         self.active_session.boot_config.engine     = self.view_dash.get_active_engine()
         self.active_session.judge_key = self.view_dash.api_key_input.text().strip()
+
+        # [Smart SWAP] 채팅 중에도 모델 변경 시 재부팅
+        if self._last_booted_model != model_name:
+            self.view_dash.log_sys(f"🔄 스왑 필요: {self._last_booted_model} -> {model_name}")
+            self.execute_boot_sequence(self.active_session)
+            self.view_dash.show_toast("엔진 교체 중... 대시보드를 다시 로딩합니다.")
+            return
 
         # AI 말풍선 미리 생성 (스트리밍 청크가 여기에 쌓임)
         self.view_dash.chat_panel.set_waiting(True, "⏳ AI 추론 중…")
@@ -378,7 +395,17 @@ class AMEVAController(QMainWindow):
         
         # 갤러리가 열려있다면 갱신 요청
         # (갤러리는 닫혔다 열릴 때 상태를 강제 갱신하므로 UI 싱크에 유리)
-
+    def closeEvent(self, event):
+        """창이 닫힐 때 도커 엔진 및 모든 쓰레드를 정리합니다."""
+        print("[AMEVA] 종료 시그널 감지. 엔진 정리 중...")
+        try:
+            self.engine.stop_matrix()
+        except: pass
+        for mid, worker in self._dl_workers.items():
+            if worker.isRunning():
+                worker.requestInterruption()
+                worker.wait(500)
+        event.accept()
 
 if __name__ == "__main__":
     QApplication.setHighDpiScaleFactorRoundingPolicy(

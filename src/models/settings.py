@@ -23,7 +23,7 @@ class StressOptions:
     top_p: float = 0.95
     repeat_penalty: float = 1.1
     system_prompt: str = "You are a professional benchmark assistant. Answer precisely and concisely."
-    judge_model: str = "exaone3:7.8b" # Default to Local EXAONE
+    judge_model: str = "exaone3.5:7.8b" # High Quality Korean Judge (Updated to 3.5)
 
 @dataclass
 class BenchmarkSession:

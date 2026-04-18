@@ -31,6 +31,9 @@ class WizardUI(QWidget):
         self._engine_btn_group = QButtonGroup(self)
         self._engine_btn_group.setExclusive(True)
 
+        self._active_model  = ""
+        self._active_engine = "OLM" # 기본 엔진 제안
+
         self._setup()
 
     # ──────────────────────────────────────────────────────────────────
@@ -90,12 +93,20 @@ class WizardUI(QWidget):
         """모델 갤러리를 팝업하여 다운로드 상태를 확인합니다."""
         from ui.model_gallery import ModelGalleryDialog
         dlg = ModelGalleryDialog(
-            current_model="", 
+            current_model=self._active_model, 
             parent=self, 
             dl_workers=self.ctrl._dl_workers
         )
+        dlg.model_selected.connect(self._on_model_selected)
         dlg.install_requested.connect(self.ctrl._handle_download_request)
         dlg.exec()
+
+    def _on_model_selected(self, model_name: str, engine_type: str):
+        """갤러리에서 모델을 확정했을 때 호출됩니다."""
+        self._active_model = model_name
+        self._active_engine = engine_type
+        # 선택된 정보를 버튼 등 UI에 표시할 수도 있음 (향후 확장)
+        self.ctrl.view_dash.set_active_model(model_name, engine_type) # 대시보드 쪽에도 미리 예고
 
     def _build_engine_section(self) -> QGroupBox:
         """섹션 1: 엔진 선택 (수평 토글 버튼 + 확장 가능 구조)."""
@@ -251,15 +262,19 @@ class WizardUI(QWidget):
 
     def _on_boot_clicked(self):
         """설정을 캡처하고 즉시 부팅 시퀀스를 발동합니다."""
-        selected_engine = next(
-            (k for k, b in self._engine_btns.items() if b.isChecked()), "OLM"
-        )
+        if not self._active_model:
+            # 모델 미선택 시 부팅 차단 및 가이드
+            from ui.model_gallery import MODELS_DIR
+            self._open_gallery()
+            return
+
+        selected_engine = self._active_engine
         boot_config = BootstrapConfig(
             engine=selected_engine,
             cpu_cores=self.cpu_spin.value(),
             ram_mb=self.ram_spin.value(),
             gpu_layers=self.gpu_spin.value() if self.specs.has_nvidia else 0,
-            model_name=DEFAULT_INFERENCE_MODEL
+            model_name=self._active_model
         )
         stress_config = StressOptions(
             threads=self.thread_spin.value(),

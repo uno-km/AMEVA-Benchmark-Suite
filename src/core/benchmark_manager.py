@@ -365,10 +365,12 @@ class ExecutionEngine(QThread):
 
 
             self._slog(f"Task 완료 | TPS: {tps_val} | TTFT: {ttft:.1f}ms | {avg_watts:.1f}W")
-            self._log(f"✓ {task.get('task','?')}  |  Judge: {score}  |  {duration:.2f}s  |  {tps_val} t/s")
+            category = task.get('category', 'General')
+            self._log(f"✓ [{category}] {task.get('task','?')}  |  Judge: {score}  |  {duration:.2f}s  |  {tps_val} t/s")
 
             results.append({
                 "Model_Hash":         model_name,
+                "Benchmark_Category": task.get('category', 'General'),
                 "Quant_Method":       "N/A",
                 "Context_Size":       self.session.stress_config.n_ctx,
                 "Thread_Config":      self.session.stress_config.threads,
@@ -385,6 +387,7 @@ class ExecutionEngine(QThread):
                 "Warm/Cold_Tag":      "WARM",
                 "Sampling_Time (ms)": round(sample_ms, 2),
                 "Judge_Score":        score,
+                "Judge_Reason":       "N/A",
                 "Metric_Source (bench/srv)": "srv",
                 "eval_type":          eval_type,
                 "prompt":             task.get('prompt', ''),
@@ -407,9 +410,10 @@ class ExecutionEngine(QThread):
         for res in results:
             if res.get("eval_type") == "llm_judge":
                 score_data = self._call_llm_judge(res["prompt"], res["response"])
-                res["score_judge"] = score_data.get("score", 0)
-                res["reason"] = score_data.get("reason", "No reason provided.")
-                final_scores.append(res["score_judge"])
+                res["Judge_Score"]  = score_data.get("score", 0)
+                res["Judge_Reason"] = score_data.get("reason", "No reason provided.")
+                self._log(f"   └ [판정관 의견]: {res['Judge_Reason']}")
+                final_scores.append(res["Judge_Score"])
 
         avg_score = sum(final_scores)/len(final_scores) if final_scores else 0
         self._log(f"🏆 최종 판정 완료. 평균 점수: {avg_score:.2f}/10")
