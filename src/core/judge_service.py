@@ -49,11 +49,12 @@ class JudgeService:
                         if chunk_callback:
                             chunk_callback(content)
                 
-                # 정규식으로 JSON만 추출 (모델이 마크다운 블록을 뱉을 수 있음)
-                json_match = JudgeService._extract_json(full_reason)
-                if json_match:
-                    return json.loads(json_match)
-                return {"score": 0, "reason": "JSON 파싱 실패"}
+                # 강인한 JSON 추출 및 복구 로직 사용
+                result_data = JudgeService._extract_json(full_reason)
+                if result_data:
+                    return result_data
+                
+                return {"score": 0, "reason": "JSON 복구 실패"}
 
             except Exception as e:
                 if chunk_callback:
@@ -79,11 +80,34 @@ class JudgeService:
                 return {"score": 0, "reason": f"Remote Judge Error: {e}"}
 
     @staticmethod
-    def _extract_json(text: str) -> str:
-        """텍스트에서 첫 번째 {...} 블록을 안전하게 추출합니다."""
+    def _extract_json(text: str) -> dict:
+        """
+        텍스트에서 JSON을 추출하고, 문법 오류(특히 따옴표 탈출 실패)를 최대한 복구합니다.
+        """
         import re
-        # 마크다운 블록 등을 고려하여 가장 바깥쪽 중괄호 쌍을 찾음
-        match = re.search(r'(\{.*\})', text, re.DOTALL)
-        if match:
-             return match.group(1).strip()
-        return None
+        
+        # 1. 시도: 중괄호 블록 추출
+        match = re.search(r'\{.*\}', text, re.DOTALL)
+        if not match:
+            return None
+            
+        json_str = match.group(0).strip()
+        
+        # 2. 시도: 표준 json.loads
+        try:
+            return json.loads(json_str)
+        except:
+            pass
+            
+        # 3. 시도: 'Dirty Repair' - 정규식 강제 추출
+        try:
+            score_match = re.search(r'"score":\s*(\d+)', json_str)
+            score = int(score_match.group(1)) if score_match else 0
+            
+            # "reason": " 부터 마지막 " 까지 도려내기
+            reason_match = re.search(r'"reason":\s*"(.*)"', json_str, re.DOTALL)
+            reason = reason_match.group(1).strip() if reason_match else "Reason recovery failed"
+            
+            return {"score": score, "reason": reason}
+        except:
+            return None

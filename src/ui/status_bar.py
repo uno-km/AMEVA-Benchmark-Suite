@@ -82,10 +82,10 @@ class AMEVAStatusBar(QStatusBar):
         self.dl_lbl.setStyleSheet("color: #60a5fa; font-size: 10px; font-weight: 700;")
         
         self.dl_bar = QProgressBar()
-        self.dl_bar.setFixedSize(120, 8) # 조금 더 여유 있게
+        self.dl_bar.setFixedSize(120, 14) # 높이 14로 상향
         self.dl_bar.setTextVisible(False)
         self.dl_bar.setStyleSheet(
-            "QProgressBar { background-color: #0f172a; border: 1px solid #334155; border-radius: 3px; font-size: 8px; }"
+            "QProgressBar { background-color: #0f172a; border: 1px solid #334155; border-radius: 4px; font-size: 11px; }"
             "QProgressBar::chunk { background-color: #3b82f6; border-radius: 2px; }"
         )
         
@@ -95,7 +95,7 @@ class AMEVAStatusBar(QStatusBar):
 
         # 3. 추가 정보 (버전 등)
         self.ver_lbl = QLabel("AMEVA v5.6 | CORE ONLINE")
-        self.ver_lbl.setStyleSheet("color: #475569; font-size: 9px; font-weight: 700;")
+        self.ver_lbl.setStyleSheet("color: #475569; font-size: 10px; font-weight: 700;")
         layout.addWidget(self.ver_lbl)
 
         self.addPermanentWidget(container, 1)
@@ -106,16 +106,22 @@ class AMEVAStatusBar(QStatusBar):
         elif name == "ollama":
             self.ollama_ind.set_status(is_online, msg)
 
+    def set_container_status(self, status: str, detail: str):
+        """컨테이너 상태(IDLE/OFFLINE/RUNNING)를 시각적으로 업데이트"""
+        self.ver_lbl.setText(f"AMEVA v5.6 | {status} | {detail}")
+        if status == "OFFLINE":
+            self.ver_lbl.setStyleSheet("color: #ef4444; font-size: 10px; font-weight: 800;")
+        elif status == "RUNNING":
+            self.ver_lbl.setStyleSheet("color: #3b82f6; font-size: 10px; font-weight: 800;")
+        else: # IDLE
+            self.ver_lbl.setStyleSheet("color: #475569; font-size: 10px; font-weight: 700;")
+
     def set_download_progress(self, model_id: str, progress: int, is_done: bool = False):
         """백그라운드 다운로드 상태 업데이트"""
         if is_done:
-            # 하나가 완료되어도 다른 것이 진행 중일 수 있으므로 즉시 숨기지 않음
             if progress >= 100:
                 self.dl_lbl.setText(f"✅ {model_id.upper()} 완료")
                 self.dl_bar.setValue(100)
-            
-            # 모든 작업이 완료되었는지는 밖(Controller)에서 active_count를 보내주는 방식으로 처리하거나
-            # 여기서 일정 시간 후 숨김 처리
             QTimer.singleShot(3000, lambda: self._check_and_hide())
             return
             
@@ -124,6 +130,5 @@ class AMEVAStatusBar(QStatusBar):
         self.dl_bar.setValue(progress)
 
     def _check_and_hide(self):
-        # 단순히 텍스트가 완료인 상태면 숨김 (여러 개가 동시에 돌 때는 최신 것이 덮어씀)
         if "완료" in self.dl_lbl.text():
             self.dl_frame.hide()

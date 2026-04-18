@@ -85,6 +85,8 @@ class AMEVAController(QMainWindow):
         self.view_dash.shutdown_signal.connect(self.handle_shutdown)
         self.view_dash.chat_panel.chat_submitted.connect(self.handle_chat_prompt)
         self.view_dash.chat_panel.chat_interrupted.connect(self._on_chat_interrupted)
+        self.view_dash.model_changed_signal.connect(self._handle_immediate_swap)
+        self.view_wizard.start_signal.connect(self._open_gallery_from_wizard)
         
         # 모델 갤러리와의 연동 (백그라운드 다운로드 신호)
         # DashUI나 WizardUI에서 갤러리를 열 때 컨트롤러와 연결되도록 처리 필요
@@ -113,6 +115,24 @@ class AMEVAController(QMainWindow):
 
     # ──────────────────────────────────────────────────────────────────────
     # Boot Sequence
+    def _open_gallery_from_wizard(self):
+        """[Scenario Step 2] 메인에서 부팅 시 모델 갤러리를 먼저 오픈"""
+        session = self.view_wizard.get_session_config()
+        self.active_session = session 
+        self.view_dash._open_model_gallery()
+
+    def _handle_immediate_swap(self, name: str, engine_type: str):
+        """갤러리에서 모델 선택 시 즉각 반응 (최초 부팅 포함)"""
+        # 엔진이 꺼져 있거나(최초/초기화 상태) 모델이 바뀌었을 때
+        if not self.engine.container or self._last_booted_model != name:
+            self.view_dash.log_sys(f"📢 엔진 가동/스왑 요청됨: {name}")
+            if not self.active_session:
+                self.active_session = self.view_wizard.get_session_config()
+            
+            # 모델명 주입 후 부팅
+            self.active_session.boot_config.model_name = name
+            self.execute_boot_sequence(self.active_session)
+
     # ──────────────────────────────────────────────────────────────────────
 
     def execute_boot_sequence(self, session: BenchmarkSession):
@@ -218,9 +238,16 @@ class AMEVAController(QMainWindow):
         self.view_dash.log_bench(
             f"\n📊 {len(results)}건 결과가 Edge_v5_Singularity_Report.csv 에 저장되었습니다."
         )
+        
+        # [Scenario Step 11] 시스템 완벽 초기화
+        self._last_booted_model = None
+        self.ameva_status.set_container_status("OFFLINE", "READY")
+        self.view_dash.update_telemetry({"power": 0.0, "temp": 0.0, "ram": 0.0})
+        self.view_dash.set_active_model("미선택", "OFFLINE") # 라벨 초기화
+        
         self.view_dash.btn_run.setEnabled(True)
         self.view_dash.btn_chat.setEnabled(True)
-        self.view_dash.show_toast("벤치마크 완료. 결과가 안전하게 저장되었습니다.")
+        self.view_dash.show_toast("벤치마크 완료 및 엔진 종료. 다시 시작하려면 모델을 선택하세요.")
 
     # ──────────────────────────────────────────────────────────────────────
     # Chat Benchmark
@@ -291,45 +318,49 @@ class AMEVAController(QMainWindow):
     # ──────────────────────────────────────────────────────────────────────
 
     def handle_shutdown(self):
+        """[Scenario Step 15] 메인으로 돌아갈 때 엔진 완전 종료 및 자원 반납"""
         if self.active_runner and self.active_runner.isRunning():
             answer = QMessageBox.question(
                 self, "작업 취소 확인",
-                "현재 벤치마크가 진행중입니다.\n작업을 취소하고 메인 화면으로 돌아가시겠습니까?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
+                "벤치마크가 진행중입니다.\n중단하고 메인으로 돌아가시겠습니까?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No
             )
-            if answer != QMessageBox.Yes:
-                return
+            if answer != QMessageBox.Yes: return
             self.active_runner.requestInterruption()
-            self.view_dash.show_toast("벤치마크 취소 요청 중... 안전하게 종료합니다.")
-            self.active_runner.wait(2000)
+            self.active_runner.wait(1000)
 
         elif self._boot_thread and self._boot_thread.isRunning():
             answer = QMessageBox.question(
                 self, "부팅 취소 확인",
-                "커널 부팅 또는 초기화가 진행중입니다.\n메인 화면으로 돌아가시겠습니까?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
+                "엔진 부팅 중입니다.\n중단하고 메인으로 돌아가시겠습니까?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No
             )
-            if answer != QMessageBox.Yes:
-                return
+            if answer != QMessageBox.Yes: return
             self._boot_thread.requestInterruption()
-            self.view_dash.show_toast("부팅 취소 요청 중... 안전하게 돌아갑니다.")
-            self._boot_thread.wait(2000)
+            self._boot_thread.wait(1000)
 
-        # 채팅 러너도 정리
+        # 1. 모든 엔진 및 자원 완전 파괴 (Strict Reset)
         if self._chat_runner and self._chat_runner.isRunning():
             self._chat_runner.requestInterruption()
             self._chat_runner.wait(1000)
 
-        self.engine.shutdown()
+        self.view_dash.log_sys("📢 시스템 리부트 시퀀스: 자원 완전 반납 중...")
+        self.engine.stop_matrix() 
+        
+        # 2. 모든 세션 변수 초기화 (태초의 상태)
         self.active_session = None
         self.active_runner  = None
         self._boot_thread   = None
         self._chat_runner   = None
+        self._last_booted_model = None 
+        
+        # 3. UI 복구 및 초기화
+        self.ameva_status.set_container_status("IDLE", "MAIN")
+        self.view_dash.clear_logs()
         self.view_dash.btn_run.setEnabled(True)
         self.view_dash.btn_chat.setEnabled(True)
-        self.view_dash.clear_logs()
+        
+        # 4. 메인 화면으로 전환
         self.stack.setCurrentIndex(0)
         self.view_dash.show_toast("커널 닫기, 마운트 해제, 접속 해제가 완료되었습니다.")
 

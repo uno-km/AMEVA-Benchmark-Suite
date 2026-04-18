@@ -18,6 +18,7 @@ class DashUI(QWidget):
     chaos_monkey_signal  = Signal()
     shutdown_signal      = Signal()
     chat_prompt_signal   = Signal(str)   # 채팅 프롬프트 → 컨트롤러
+    model_changed_signal = Signal(str, str) # 모델/엔진 변경 알림
 
     # 히스토리 길이 (0.1s × 300 = 30초 분량)
     _HISTORY = 300
@@ -517,6 +518,7 @@ class DashUI(QWidget):
         self._active_engine = engine_type
         self._lbl_active_model.setText(f"모델: {name} ({engine_type})")
         self.show_toast(f"✅ 모델 변경됨: {name} [{engine_type}]")
+        self.model_changed_signal.emit(name, engine_type) # 컨트롤러에게 즉시 보고
 
     def get_active_engine(self) -> str:
         return self._active_engine
@@ -801,6 +803,19 @@ class DashUI(QWidget):
 
     def _on_shutdown_clicked(self):
         self.shutdown_signal.emit()
+
+    def _open_model_gallery(self):
+        """[Scenario Step 3] 모델 갤러리를 열고 선택 시 즉시 부팅 시퀀스 유도"""
+        from ui.model_gallery import ModelGalleryDialog
+        dlg = ModelGalleryDialog(
+            current_model=self._active_model,
+            parent=self,
+            dl_workers=self.ctrl._dl_workers
+        )
+        # 선택 시 대시보드 업데이트 + 신호 발생 (컨트롤러가 이를 가로채서 부팅함)
+        dlg.model_selected.connect(self.set_active_model)
+        dlg.install_requested.connect(self.ctrl._handle_download_request)
+        dlg.exec()
 
     def resizeEvent(self, event):
         if self._overlay.isVisible():

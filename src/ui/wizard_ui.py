@@ -6,6 +6,8 @@ from models.settings import BootstrapConfig, StressOptions, BenchmarkSession
 
 class WizardUI(QWidget):
     """[V5.5] 부트스트랩 설정 마법사. 날렵한 레이아웃 + 수평 엔진 선택."""
+    
+    start_signal = Signal() # 컨트롤러에 부팅 의사 전달
 
     def __init__(self, ctrl):
         super().__init__()
@@ -83,7 +85,7 @@ class WizardUI(QWidget):
         self.boot_btn = QPushButton("🚀  커널 부팅 시퀀스 시작")
         self.boot_btn.setObjectName("BootButton")
         self.boot_btn.setFixedHeight(48)
-        self.boot_btn.clicked.connect(self._on_boot_clicked)
+        self.boot_btn.clicked.connect(self.start_signal.emit) # 컨트롤러에게 위임
         root.addWidget(self.boot_btn)
 
         # 초기 프리셋 적용

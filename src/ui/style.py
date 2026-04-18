@@ -137,8 +137,9 @@ class PremiumStyle:
                 border-radius: 6px;
                 text-align: center;
                 font-weight: bold;
-                font-size: 11px;
-                max-height: 16px;
+                font-size: 12px;
+                min-height: 14px;
+                max-height: 18px;
             }}
 
             QProgressBar::chunk {{

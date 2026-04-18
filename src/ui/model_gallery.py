@@ -319,15 +319,19 @@ class ModelCard(QFrame):
             self.btn_gguf.setText("▶ 사용 (GGUF)")
             self.btn_gguf.setObjectName("SelectBtn")
             self.btn_gguf.setEnabled(True)
-            try: self.btn_gguf.clicked.disconnect()
-            except: pass
+            try:
+                self.btn_gguf.clicked.disconnect()
+            except:
+                pass
             self.btn_gguf.clicked.connect(lambda: self.select_clicked.emit(self._info["id"], "ENG"))
         else:
             self.btn_gguf.setText("⬇ 다운로드")
             self.btn_gguf.setObjectName("InstallBtn")
             self.btn_gguf.setEnabled(True)
-            try: self.btn_gguf.clicked.disconnect()
-            except: pass
+            try:
+                self.btn_gguf.clicked.disconnect()
+            except:
+                pass
             self.btn_gguf.clicked.connect(lambda: self.install_clicked.emit(self._info))
 
         # 2. Ollama 전용 버튼 상태 
@@ -335,8 +339,10 @@ class ModelCard(QFrame):
             self.btn_ollama.setText("▶ 사용 (Ollama)")
             self.btn_ollama.setObjectName("SelectBtn")
             self.btn_ollama.setEnabled(True)
-            try: self.btn_ollama.clicked.disconnect()
-            except: pass
+            try:
+                self.btn_ollama.clicked.disconnect()
+            except:
+                pass
             self.btn_ollama.clicked.connect(lambda: self.select_clicked.emit(self._info["ollama_tag"], "OLM"))
         else:
             self.btn_ollama.setText("⬇ 풀링")
