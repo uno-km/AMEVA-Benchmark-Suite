@@ -21,7 +21,7 @@ __pycache__/
 !/src/models/**
 
 # 3. 벤치마크 결과 리포트 및 로그 (동적 생성 파일)
-*.csv
+*_Report.csv
 *.log
 
 # 4. 환경 변수 및 보안 키 (API Key 유출 방지)
