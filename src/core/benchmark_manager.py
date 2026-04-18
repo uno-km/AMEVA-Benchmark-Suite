@@ -73,6 +73,7 @@ class ExecutionEngine(QThread):
     log_signal     = Signal(str)   # UI Analytics
     sys_log_signal = Signal(str)   # Kernel Telemetry
     token_signal   = Signal(int)   # Token cumulative
+    chunk_signal   = Signal(str)   # Real-time text chunk for streaming tab
     report_signal  = Signal(list)  # Data verification report
 
     def __init__(self, session: BenchmarkSession, dataset: list, engine_core):
@@ -329,6 +330,7 @@ class ExecutionEngine(QThread):
                                 text_acc += token
                                 tok_count += 1
                                 self.token_signal.emit(1)
+                                self.chunk_signal.emit(token)
                                 
                             # 종료 조건 체크
                             if engine_type == "OLM":

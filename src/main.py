@@ -30,6 +30,8 @@ from core.matrix_engine import MatrixEngine
 from core.benchmark_manager import ExecutionEngine
 from core.boot_thread import BootThread
 from core.chat_benchmark_engine import ChatBenchmarkEngine
+from core.service_monitor import ServiceMonitorThread
+from ui.status_bar import AMEVAStatusBar
 
 
 class AMEVAController(QMainWindow):
@@ -64,6 +66,16 @@ class AMEVAController(QMainWindow):
         self.stack.addWidget(self.view_wizard)   # 0
         self.stack.addWidget(self.view_dash)     # 1
 
+        # ── 상태 표시줄 (Status Bar) ─────────────────────────────────────
+        self.ameva_status = AMEVAStatusBar(self)
+        self.setStatusBar(self.ameva_status)
+
+        # ── 서비스 모니터링 시작 ──────────────────────────────────────────
+        self._monitor = ServiceMonitorThread()
+        self._monitor.status_updated.connect(self.ameva_status.update_service_status)
+        self.ameva_status.service_request.connect(self._handle_service_request)
+        self._monitor.start()
+
         # ── 시그널 연결 ───────────────────────────────────────────────────
         self.view_dash.run_benchmark_signal.connect(self.handle_run_request)
         self.view_dash.chaos_monkey_signal.connect(self.engine.inject_chaos)
@@ -76,6 +88,13 @@ class AMEVAController(QMainWindow):
             self._chat_runner.requestInterruption()
             self.view_dash.log_bench("🛑 채팅 벤치마크 중단 요청됨.")
             self.view_dash.show_toast("채팅 중단됨.")
+
+    def _handle_service_request(self, name: str):
+        success, msg = self._monitor.attempt_start(name)
+        if success:
+            self.view_dash.show_toast(f"ℹ️ {msg}")
+        else:
+            QMessageBox.warning(self, "Service Error", msg)
 
     # ──────────────────────────────────────────────────────────────────────
     # Theme
@@ -161,10 +180,13 @@ class AMEVAController(QMainWindow):
         self.active_runner = ExecutionEngine(
             self.active_session, harness, self.engine
         )
-        self.active_runner.log_signal.connect(self.view_dash.log_bench)
         self.active_runner.sys_log_signal.connect(self.view_dash.log_sys)
         self.active_runner.token_signal.connect(self.view_dash.update_token_count)
+        self.active_runner.chunk_signal.connect(self.view_dash.append_stream)
         self.active_runner.report_signal.connect(self.handle_report_generation)
+        
+        # 스트리밍 창 초기화
+        self.view_dash.clear_stream()
         self.active_runner.start()
 
     def handle_report_generation(self, results):
@@ -207,6 +229,7 @@ class AMEVAController(QMainWindow):
         self._chat_runner.token_signal.connect(self.view_dash.update_token_count)
         self._chat_runner.sys_log_signal.connect(self.view_dash.log_sys)
         self._chat_runner.chunk_signal.connect(self.view_dash.chat_panel.append_ai_chunk)
+        self._chat_runner.chunk_signal.connect(self.view_dash.append_stream)
         self._chat_runner.done_signal.connect(self.handle_chat_done)
         self._chat_runner.error_signal.connect(self._on_chat_error)
         self._chat_runner.start()

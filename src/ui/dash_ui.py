@@ -378,7 +378,18 @@ class DashUI(QWidget):
             return
 
         value = y_data[index]
-        hover_item.setText(f"{plot.titleLabel.text()}\nIndex: {index}\nValue: {value:.2f}")
+        
+        # [Fix] pyqtgraph의 타이틀 라벨 텍스트를 안전하게 추출
+        try:
+            p_item = plot.getPlotItem()
+            title = p_item.titleLabel.text if hasattr(p_item.titleLabel, 'text') and not callable(p_item.titleLabel.text) else "Metric"
+            # 만약 callable이라면 호출
+            if hasattr(p_item.titleLabel, 'text') and callable(p_item.titleLabel.text):
+                title = p_item.titleLabel.text()
+        except:
+            title = "Metric"
+
+        hover_item.setText(f"{title}\nIndex: {index}\nValue: {value:.2f}")
         hover_item.setPos(x_data[index], y_data[index])
         hover_item.show()
 
@@ -396,6 +407,12 @@ class DashUI(QWidget):
         self.sys_console.setReadOnly(True)
         kernel_widget = self._wrap_console(self.sys_console, "⚙️  KERNEL TELEMETRY")
         self.tabs.addTab(kernel_widget, "⚙️  KERNEL TELEMETRY")
+
+        self.stream_console = QTextEdit()
+        self.stream_console.setReadOnly(True)
+        self.stream_console.setStyleSheet("font-family: 'Consolas', 'Courier New'; font-size: 13px; color: #10b981;")
+        streaming_widget = self._wrap_console(self.stream_console, "🛰️  REAL-TIME INFERENCE STREAM")
+        self.tabs.addTab(streaming_widget, "🛰️  STREAMING")
 
         return self.tabs
 
@@ -615,6 +632,18 @@ class DashUI(QWidget):
             ma_curve.setData([], [])
         if not self._user_panned and x_data:
             self._set_plot_xrange(plot, max(0, x_data[-1] - self._HISTORY), x_data[-1])
+
+    def append_stream(self, text: str):
+        """실시간 스트리밍 탭에 텍스트 청크 추가"""
+        cursor = self.stream_console.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        cursor.insertText(text)
+        self.stream_console.ensureCursorVisible()
+
+    def clear_stream(self):
+        """스트리밍 창 초기화"""
+        self.stream_console.clear()
+        self.stream_console.append("<span style='color:#64748b;'>📡 Waiting for inference stream...</span><br>")
 
     def log_bench(self, text: str):
         self.console.append(text)
