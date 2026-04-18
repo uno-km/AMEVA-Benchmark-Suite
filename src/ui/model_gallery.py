@@ -358,8 +358,9 @@ class ModelGalleryDialog(QDialog):
     """모델 갤러리 모달."""
 
     model_selected = Signal(str, str) # name, engine_type
+    install_requested = Signal(dict, bool) # info, is_ollama
 
-    def __init__(self, current_model: str = "", parent=None):
+    def __init__(self, current_model: str = "", parent=None, dl_workers: dict = None):
         super().__init__(parent)
         self.setWindowTitle("🛠️  모델 갤러리 · 설치 & 관리")
         self.setMinimumSize(780, 640)
@@ -368,7 +369,7 @@ class ModelGalleryDialog(QDialog):
 
         self._current_model = current_model
         self._cards: dict[str, ModelCard] = {}
-        self._workers: dict[str, ModelDownloadWorker] = {}
+        self._workers = dl_workers or {} # 외부에서 관리되는 워커들
 
         self._build_ui()
         self._spinner_timer = QTimer(self)
@@ -479,24 +480,20 @@ class ModelGalleryDialog(QDialog):
     def _on_install(self, info: dict):
         model_id = info["id"]
         if model_id in self._workers: return
+        self.install_requested.emit(info, False)
+        # UI 업데이트는 _workers가 외부에서 갱신되거나, 타임에 의해 동기화됨
+        # (여기서는 일단 즉시 spinner만 켜줌)
         card = self._cards[model_id]
         card.set_installing(is_ollama=False)
-        worker = ModelDownloadWorker(info, MODELS_DIR)
-        worker.progress_signal.connect(lambda pct, mid=model_id: self._on_progress(mid, pct))
-        worker.done_signal.connect(self._on_done)
-        self._workers[model_id] = worker
-        worker.start()
+        self._workers[model_id] = True # 임시 마킹
 
     def _on_ollama_pull(self, info: dict):
         model_id = info["id"]
         if model_id in self._workers: return
+        self.install_requested.emit(info, True)
         card = self._cards[model_id]
         card.set_installing(is_ollama=True)
-        worker = OllamaPullWorker(info)
-        worker.progress_signal.connect(lambda mid, pct: self._on_progress(mid, pct))
-        worker.done_signal.connect(self._on_done)
-        self._workers[model_id] = worker
-        worker.start()
+        self._workers[model_id] = True # 임시 마킹
 
     def _on_progress(self, model_id: str, pct: int):
         card = self._cards.get(model_id)
@@ -504,7 +501,7 @@ class ModelGalleryDialog(QDialog):
             card._progress.setValue(pct)
 
     def _on_done(self, success: bool, model_id: str):
-        self._workers.pop(model_id, None)
+        # 이제 완료 처리는 중앙에서 관리하지만, 열려있는 창의 UI 갱신을 위해 남겨둠
         self._update_card_statuses()
         card = self._cards.get(model_id)
         if card: card.set_installed()
@@ -521,8 +518,17 @@ class ModelGalleryDialog(QDialog):
     def _tick_spinners(self):
         frames = ["⏳", "⌛", "⏰", "⏱️"]
         self._spinner_idx = (self._spinner_idx + 1) % len(frames)
+        
+        # main.py의 실제 일꾼 목록과 동기화하여 UI 업데이트
         for mid, card in self._cards.items():
             if mid in self._workers:
+                card._spinner_lbl.show()
                 card._spinner_lbl.setText(frames[self._spinner_idx])
+                
+                # 만약 실제 Worker 객체라면 진행률도 업데이트
+                worker = self._workers[mid]
+                if hasattr(worker, 'progress_signal'):
+                    # (이미 연결되어 있지 않다면 연결) - QThread 특성상 중복 연결 방지 필요
+                    pass 
             else:
                 card._spinner_lbl.hide()

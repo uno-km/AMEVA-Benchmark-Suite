@@ -71,6 +71,28 @@ class AMEVAStatusBar(QStatusBar):
 
         layout.addStretch()
 
+        # 3. 다운로드 현황 (Background Progress)
+        self.dl_frame = QFrame()
+        self.dl_frame.hide()
+        dl_layout = QHBoxLayout(self.dl_frame)
+        dl_layout.setContentsMargins(0, 0, 10, 0)
+        dl_layout.setSpacing(8)
+        
+        self.dl_lbl = QLabel("DOWNLOADING...")
+        self.dl_lbl.setStyleSheet("color: #60a5fa; font-size: 10px; font-weight: 700;")
+        
+        self.dl_bar = QProgressBar()
+        self.dl_bar.setFixedSize(120, 6)
+        self.dl_bar.setTextVisible(False)
+        self.dl_bar.setStyleSheet(
+            "QProgressBar { background-color: #0f172a; border: 1px solid #334155; border-radius: 3px; }"
+            "QProgressBar::chunk { background-color: #3b82f6; border-radius: 2px; }"
+        )
+        
+        dl_layout.addWidget(self.dl_lbl)
+        dl_layout.addWidget(self.dl_bar)
+        layout.addWidget(self.dl_frame)
+
         # 3. 추가 정보 (버전 등)
         self.ver_lbl = QLabel("AMEVA v5.6 | CORE ONLINE")
         self.ver_lbl.setStyleSheet("color: #475569; font-size: 9px; font-weight: 700;")
@@ -83,3 +105,13 @@ class AMEVAStatusBar(QStatusBar):
             self.docker_ind.set_status(is_online, msg)
         elif name == "ollama":
             self.ollama_ind.set_status(is_online, msg)
+
+    def set_download_progress(self, model_id: str, progress: int, is_done: bool = False):
+        """백그라운드 다운로드 상태 업데이트"""
+        if is_done or progress >= 100:
+            self.dl_frame.hide()
+            return
+            
+        self.dl_frame.show()
+        self.dl_lbl.setText(f"📥 {model_id.upper()} ({progress}%)")
+        self.dl_bar.setValue(progress)

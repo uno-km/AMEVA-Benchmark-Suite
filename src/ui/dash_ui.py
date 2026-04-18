@@ -476,8 +476,13 @@ class DashUI(QWidget):
 
     def _open_model_gallery(self):
         from ui.model_gallery import ModelGalleryDialog
-        dlg = ModelGalleryDialog(current_model=self._active_model, parent=self)
+        dlg = ModelGalleryDialog(
+            current_model=self._active_model, 
+            parent=self, 
+            dl_workers=self.ctrl._dl_workers
+        )
         dlg.model_selected.connect(self.set_active_model)
+        dlg.install_requested.connect(self.ctrl._handle_download_request)
         dlg.exec()
 
     def _open_tuning_dialog(self):

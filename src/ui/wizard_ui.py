@@ -89,7 +89,12 @@ class WizardUI(QWidget):
     def _open_gallery(self):
         """모델 갤러리를 팝업하여 다운로드 상태를 확인합니다."""
         from ui.model_gallery import ModelGalleryDialog
-        dlg = ModelGalleryDialog(current_model="", parent=self)
+        dlg = ModelGalleryDialog(
+            current_model="", 
+            parent=self, 
+            dl_workers=self.ctrl._dl_workers
+        )
+        dlg.install_requested.connect(self.ctrl._handle_download_request)
         dlg.exec()
 
     def _build_engine_section(self) -> QGroupBox:

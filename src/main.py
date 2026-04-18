@@ -55,6 +55,7 @@ class AMEVAController(QMainWindow):
         self.active_runner  = None
         self._boot_thread   = None
         self._chat_runner   = None
+        self._dl_workers    = {} # 백그라운드 다운로드 일꾼 저장소
 
         # ── 내비게이션 스택 ───────────────────────────────────────────────
         self.stack = QStackedWidget()
@@ -82,6 +83,9 @@ class AMEVAController(QMainWindow):
         self.view_dash.shutdown_signal.connect(self.handle_shutdown)
         self.view_dash.chat_panel.chat_submitted.connect(self.handle_chat_prompt)
         self.view_dash.chat_panel.chat_interrupted.connect(self._on_chat_interrupted)
+        
+        # 모델 갤러리와의 연동 (백그라운드 다운로드 신호)
+        # DashUI나 WizardUI에서 갤러리를 열 때 컨트롤러와 연결되도록 처리 필요
 
     def _on_chat_interrupted(self):
         if self._chat_runner and self._chat_runner.isRunning():
@@ -323,6 +327,50 @@ class AMEVAController(QMainWindow):
                 reader = csv.DictReader(f)
                 data = list(reader)
         return data
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Background Download Manager
+    # ──────────────────────────────────────────────────────────────────────
+
+    def _handle_download_request(self, info: dict, is_ollama: bool = False):
+        """모델 갤러리에서 날아온 다운로드 요청을 백그라운드에서 처리합니다."""
+        from ui.model_gallery import ModelDownloadWorker, OllamaPullWorker, MODELS_DIR
+        model_id = info["id"]
+        
+        if model_id in self._dl_workers:
+            return # 이미 진행 중
+            
+        if is_ollama:
+            worker = OllamaPullWorker(info)
+            worker.progress_signal.connect(lambda mid, pct: self._on_dl_progress(mid, pct))
+        else:
+            worker = ModelDownloadWorker(info, MODELS_DIR)
+            worker.progress_signal.connect(lambda pct, mid=model_id: self._on_dl_progress(mid, pct))
+            
+        worker.done_signal.connect(self._on_dl_done)
+        self._dl_workers[model_id] = worker
+        worker.start()
+        
+        self.ameva_status.set_download_progress(model_id, 0)
+        self.view_dash.log_sys(f"🚀 {model_id} 백그라운드 다운로드 시작...")
+
+    def _on_dl_progress(self, model_id: str, pct: int):
+        # 상태바 갱신
+        self.ameva_status.set_download_progress(model_id, pct)
+        
+        # 현재 열려있는 갤러리 창이 있다면 진행도 전파 (UI 싱크)
+        # 갤러리는 이벤트를 직접 받지 않고, main.py가 관리하는 _dl_workers를 참조하여 업데이트함
+
+    def _on_dl_done(self, success: bool, model_id: str):
+        self._dl_workers.pop(model_id, None)
+        self.ameva_status.set_download_progress(model_id, 100, is_done=True)
+        
+        status = "완료" if success else "실패"
+        self.view_dash.log_sys(f"📢 {model_id} 다운로드 {status}")
+        self.view_dash.show_toast(f"✅ 모델 {model_id} 설치가 {status}되었습니다.")
+        
+        # 갤러리가 열려있다면 갱신 요청
+        # (갤러리는 닫혔다 열릴 때 상태를 강제 갱신하므로 UI 싱크에 유리)
 
 
 if __name__ == "__main__":
