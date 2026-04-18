@@ -108,10 +108,22 @@ class AMEVAStatusBar(QStatusBar):
 
     def set_download_progress(self, model_id: str, progress: int, is_done: bool = False):
         """백그라운드 다운로드 상태 업데이트"""
-        if is_done or progress >= 100:
-            self.dl_frame.hide()
+        if is_done:
+            # 하나가 완료되어도 다른 것이 진행 중일 수 있으므로 즉시 숨기지 않음
+            if progress >= 100:
+                self.dl_lbl.setText(f"✅ {model_id.upper()} 완료")
+                self.dl_bar.setValue(100)
+            
+            # 모든 작업이 완료되었는지는 밖(Controller)에서 active_count를 보내주는 방식으로 처리하거나
+            # 여기서 일정 시간 후 숨김 처리
+            QTimer.singleShot(3000, lambda: self._check_and_hide())
             return
             
         self.dl_frame.show()
         self.dl_lbl.setText(f"📥 {model_id.upper()} ({progress}%)")
         self.dl_bar.setValue(progress)
+
+    def _check_and_hide(self):
+        # 단순히 텍스트가 완료인 상태면 숨김 (여러 개가 동시에 돌 때는 최신 것이 덮어씀)
+        if "완료" in self.dl_lbl.text():
+            self.dl_frame.hide()

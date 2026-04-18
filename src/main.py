@@ -12,7 +12,8 @@ if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
 from ui.qt_bridge import *
-from core.constants import DEFAULT_INFERENCE_MODEL
+from core.constants import OLLAMA_BASE_URL, LLAMA_CPP_HOST, LLAMA_CPP_PORT
+from core.judge_service import JudgeService
 
 # 모델 (데이터 및 사양)
 from models.hardware import HardwareService
@@ -362,12 +363,18 @@ class AMEVAController(QMainWindow):
         # 갤러리는 이벤트를 직접 받지 않고, main.py가 관리하는 _dl_workers를 참조하여 업데이트함
 
     def _on_dl_done(self, success: bool, model_id: str):
-        self._dl_workers.pop(model_id, None)
-        self.ameva_status.set_download_progress(model_id, 100, is_done=True)
+        # 즉시 삭제하지 않고 잠시 후 삭제하여 QThread 메모리 이슈 방지
+        # self._dl_workers.pop(model_id, None)
+        
+        active_count = len([w for w in self._dl_workers.values() if w.isRunning()])
+        self.ameva_status.set_download_progress(model_id, 100, is_done=(active_count <= 0))
         
         status = "완료" if success else "실패"
         self.view_dash.log_sys(f"📢 {model_id} 다운로드 {status}")
         self.view_dash.show_toast(f"✅ 모델 {model_id} 설치가 {status}되었습니다.")
+        
+        # 5초 뒤에 명단에서 제거 (안전 지연)
+        QTimer.singleShot(5000, lambda: self._dl_workers.pop(model_id, None))
         
         # 갤러리가 열려있다면 갱신 요청
         # (갤러리는 닫혔다 열릴 때 상태를 강제 갱신하므로 UI 싱크에 유리)
