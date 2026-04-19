@@ -12,7 +12,7 @@ from ui.qt_bridge import *
 from core.ollama_client import OllamaClient
 from core.constants import OLLAMA_BASE_URL, LLAMA_CPP_HOST, LLAMA_CPP_PORT
 from core.judge_service import JudgeService
-from core.prompt_utils import format_chatml, get_stop_tokens
+from core.prompt_utils import PromptFactory, get_stop_tokens
 from models.settings import BenchmarkSession
 from models.report_db import ReportManager
 
@@ -48,11 +48,9 @@ class ChatBenchmarkEngine(QThread):
         engine_type  = session.boot_config.engine
         model_name   = session.boot_config.model_name
 
-        from core.prompt_utils import format_chatml, get_stop_tokens
-        
-        # [Engineering] ChatML 템플릿 적용 (환각 방지 핵심)
-        formatted_prompt = format_chatml(self._prompt, session.stress_config.system_prompt)
-        stop_tokens = get_stop_tokens(engine_type)
+        # [Scenario] 모델별 자동 템플릿 래핑 (PromptFactory 활용)
+        formatted_prompt = PromptFactory.wrap(self._prompt, model_name, session.stress_config.system_prompt)
+        stop_tokens = get_stop_tokens(model_name)
 
         self._slog(f"[CHAT_MOD] 채팅 벤치마크 시작 – 모델: {model_name}")
         
@@ -187,15 +185,21 @@ class ChatBenchmarkEngine(QThread):
 
         # [Judge My Chat] 실시간 채팅 비평 로직 가동
         if session.stress_config.judge_model:
-            self._slog(f"🧠 판정관 호출 중: {session.stress_config.judge_model}")
-            score_data = JudgeService.call_llm_judge(
-                self._prompt, 
-                text_acc, 
-                session.stress_config,
-                chunk_callback=self.chunk_signal.emit
-            )
-            result["Judge_Score"] = score_data.get("score", 0)
-            result["Judge_Reason"] = score_data.get("reason", "")
+            # [Engineering] 격리 정책상 GGUF(ENG) 기동 중에는 Ollama 사이드카 호출 불가 안내
+            if engine_type == "ENG":
+                self._slog("ℹ️ [INFO] 격리 모드(ENG)에서는 실시간 판정관 호출이 제한됩니다. (하네스 전용)")
+                result["Judge_Score"] = "N/A"
+                result["Judge_Reason"] = "GGUF Isolation mode: Judge requires Ollama engine."
+            else:
+                self._slog(f"🧠 판정관 호출 중: {session.stress_config.judge_model}")
+                score_data = JudgeService.call_llm_judge(
+                    self._prompt, 
+                    text_acc, 
+                    session.stress_config,
+                    chunk_callback=self.chunk_signal.emit
+                )
+                result["Judge_Score"] = score_data.get("score", 0)
+                result["Judge_Reason"] = score_data.get("reason", "")
             
             # 최종 결과 리포트 업데이트
             self._slog(f"🏆 채팅 판정 결과: {result['Judge_Score']}/10")

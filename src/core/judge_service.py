@@ -30,6 +30,16 @@ class JudgeService:
         # 1. 로컬 판정 (Ollama)
         if ":" in judge_model or "exaone" in judge_model.lower() or "qwen" in judge_model.lower():
             try:
+                # [Engineering] 판정 전 모델 존재 여부 선제적 체크
+                local_models = OllamaClient.list_local_models()
+                model_names = [m.get('name') for m in local_models]
+                
+                # 정규화된 이름으로 체크 (예: exaone3.5:7.8b)
+                if judge_model not in model_names and (judge_model + ":latest") not in model_names:
+                    msg = f"⚠ 판정관 모델('{judge_model}')이 Ollama에 없습니다. 먼저 모델을 Pull 해주세요."
+                    if chunk_callback: chunk_callback(f"\n{msg}")
+                    return {"score": 0, "reason": msg}
+
                 if chunk_callback:
                     chunk_callback(f"\n\n--- 🧠 Local Judge Thought ({judge_model}) ---\n")
                 
@@ -44,6 +54,8 @@ class JudgeService:
                 for line in resp.iter_lines():
                     if line:
                         chunk = json.loads(line)
+                        if "error" in chunk:
+                            raise RuntimeError(chunk["error"])
                         content = chunk.get("message", {}).get("content", "")
                         full_reason += content
                         if chunk_callback:
@@ -54,12 +66,13 @@ class JudgeService:
                 if result_data:
                     return result_data
                 
-                return {"score": 0, "reason": "JSON 복구 실패"}
+                return {"score": 0, "reason": f"JSON 파싱 실패 (원문: {full_reason[:50]}...)"}
 
             except Exception as e:
+                err_msg = f"Local Judge Error: {str(e)}"
                 if chunk_callback:
-                    chunk_callback(f"\n[⚠ 판정 실패]: {e}")
-                return {"score": 0, "reason": f"Local Judge Error: {e}"}
+                    chunk_callback(f"\n[⚠ 판정 실패]: {err_msg}")
+                return {"score": 0, "reason": err_msg}
 
         # 2. 원격 판정 (OpenAI)
         else:

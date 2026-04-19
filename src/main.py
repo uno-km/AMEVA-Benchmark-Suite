@@ -119,7 +119,7 @@ class AMEVAController(QMainWindow):
         """[Scenario Step 2] 메인에서 부팅 시 모델 갤러리를 먼저 오픈"""
         session = self.view_wizard.get_session_config()
         self.active_session = session 
-        self.view_dash._open_model_gallery()
+        self.view_dash._open_model_gallery(preferred_engine=session.boot_config.engine)
 
     def _handle_immediate_swap(self, name: str, engine_type: str):
         """갤러리에서 모델 선택 시 즉각 반응 (최초 부팅 포함)"""
@@ -345,7 +345,7 @@ class AMEVAController(QMainWindow):
             self._chat_runner.wait(1000)
 
         self.view_dash.log_sys("📢 시스템 리부트 시퀀스: 자원 완전 반납 중...")
-        self.engine.stop_matrix() 
+        self.engine.shutdown()
         
         # 2. 모든 세션 변수 초기화 (태초의 상태)
         self.active_session = None
@@ -430,7 +430,7 @@ class AMEVAController(QMainWindow):
         """창이 닫힐 때 도커 엔진 및 모든 쓰레드를 정리합니다."""
         print("[AMEVA] 종료 시그널 감지. 엔진 정리 중...")
         try:
-            self.engine.stop_matrix()
+            self.engine.shutdown()
         except: pass
         for mid, worker in self._dl_workers.items():
             if worker.isRunning():

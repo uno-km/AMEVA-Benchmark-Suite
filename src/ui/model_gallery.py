@@ -321,7 +321,7 @@ class ModelCard(QFrame):
             self.btn_gguf.setEnabled(True)
             try:
                 self.btn_gguf.clicked.disconnect()
-            except:
+            except (TypeError, RuntimeError):
                 pass
             self.btn_gguf.clicked.connect(lambda: self.select_clicked.emit(self._info["id"], "ENG"))
         else:
@@ -330,7 +330,7 @@ class ModelCard(QFrame):
             self.btn_gguf.setEnabled(True)
             try:
                 self.btn_gguf.clicked.disconnect()
-            except:
+            except (TypeError, RuntimeError):
                 pass
             self.btn_gguf.clicked.connect(lambda: self.install_clicked.emit(self._info))
 

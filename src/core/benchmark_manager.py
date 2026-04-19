@@ -12,7 +12,7 @@ from .ollama_client import OllamaClient
 from .constants import OLLAMA_BASE_URL, LLAMA_CPP_HOST, LLAMA_CPP_PORT
 from models.settings import BenchmarkSession
 from models.hardware import HardwareService
-from core.prompt_utils import format_chatml, get_stop_tokens
+from core.prompt_utils import PromptFactory, get_stop_tokens
 from .judge_service import JudgeService
 
 def _ts() -> str:
@@ -253,11 +253,11 @@ class ExecutionEngine(QThread):
             # 1. [페이로드 튜닝] Qwen 0.5B의 창의성을 거세하고 팩트 기계로 만듭니다.
             sample_ms = 0
 
-            # 1. 페이로드 준비 (ChatML 적용 및 동적 튜닝 피드백)
+            # 1. 페이로드 준비 (PromptFactory를 통한 가족군별 자동 템플릿 래핑)
             raw_prompt = task.get('prompt', 'Hello')
             sc = self.session.stress_config
-            formatted_prompt = format_chatml(raw_prompt, sc.system_prompt)
-            stop_tokens = get_stop_tokens(engine_type)
+            formatted_prompt = PromptFactory.wrap(raw_prompt, model_name, sc.system_prompt)
+            stop_tokens = get_stop_tokens(model_name)
 
             if engine_type == "OLM":
                 payload = {
@@ -417,13 +417,16 @@ class ExecutionEngine(QThread):
         
         # --- [Phase: Judging] ---
         final_scores = []
-        for res in results:
-            if res.get("eval_type") == "llm_judge":
-                score_data = self._call_llm_judge(res["prompt"], res["response"])
-                res["Judge_Score"]  = score_data.get("score", 0)
-                res["Judge_Reason"] = score_data.get("reason", "No reason provided.")
-                self._log(f"   └ [판정관 의견]: {res['Judge_Reason']}")
-                final_scores.append(res["Judge_Score"])
+        try:
+            for res in results:
+                if res.get("eval_type") == "llm_judge":
+                    score_data = self._call_llm_judge(res["prompt"], res["response"])
+                    res["Judge_Score"]  = score_data.get("score", 0)
+                    res["Judge_Reason"] = score_data.get("reason", "No reason provided.")
+                    self._log(f"   └ [판정관 의견]: {res['Judge_Reason']}")
+                    final_scores.append(res["Judge_Score"])
+        except Exception as e:
+            self._log(f"❌ 판정 수행 중 오류: {e}")
 
         avg_score = sum(final_scores)/len(final_scores) if final_scores else 0
         

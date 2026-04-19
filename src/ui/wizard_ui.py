@@ -121,7 +121,19 @@ class WizardUI(QWidget):
             self._add_engine_button(label, key, tooltip, layout)
 
         layout.addStretch()
+        
+        # 엔진 변경 시 데이터 동기화 연결
+        self._engine_btn_group.buttonClicked.connect(self._on_engine_btn_clicked)
+        
         return group
+
+    def _on_engine_btn_clicked(self, btn):
+        """선택된 버튼에 따라 내부 엔진 식별자(ENG/OLM)를 업데이트합니다."""
+        for key, b in self._engine_btns.items():
+            if b == btn:
+                self._active_engine = key
+                self.ctrl.view_dash.log_sys(f"🔘 커널 선택 변경: {key}")
+                break
 
     def _add_engine_button(self, label: str, key: str, tooltip: str,
                            layout: QHBoxLayout):
@@ -262,17 +274,10 @@ class WizardUI(QWidget):
             self.cpu_spin.setValue(d["cpu"])
             self.ram_spin.setValue(d["ram"])
 
-    def _on_boot_clicked(self):
-        """설정을 캡처하고 즉시 부팅 시퀀스를 발동합니다."""
-        if not self._active_model:
-            # 모델 미선택 시 부팅 차단 및 가이드
-            from ui.model_gallery import MODELS_DIR
-            self._open_gallery()
-            return
-
-        selected_engine = self._active_engine
+    def get_session_config(self) -> BenchmarkSession:
+        """[V5.6] UI에 입력된 하드웨어 및 엔진 설정을 캡처하여 반환합니다."""
         boot_config = BootstrapConfig(
-            engine=selected_engine,
+            engine=self._active_engine,
             cpu_cores=self.cpu_spin.value(),
             ram_mb=self.ram_spin.value(),
             gpu_layers=self.gpu_spin.value() if self.specs.has_nvidia else 0,
@@ -283,5 +288,11 @@ class WizardUI(QWidget):
             n_ctx=self.ctx_spin.value(),
             iterations=self.iter_spin.value()
         )
-        session = BenchmarkSession(boot_config=boot_config, stress_config=stress_config)
-        self.ctrl.execute_boot_sequence(session)
+        # 시스템 프롬프트 등 기본값 주입
+        stress_config.system_prompt = "You are a helpful and professional AI assistant."
+        
+        return BenchmarkSession(boot_config=boot_config, stress_config=stress_config)
+
+    def _on_boot_clicked(self):
+        # 이제 boot_btn은 직접 start_signal.emit에 연결되어 이 슬롯은 백업용입니다.
+        self.start_signal.emit()

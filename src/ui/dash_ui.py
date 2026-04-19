@@ -804,7 +804,7 @@ class DashUI(QWidget):
     def _on_shutdown_clicked(self):
         self.shutdown_signal.emit()
 
-    def _open_model_gallery(self):
+    def _open_model_gallery(self, preferred_engine: str = None):
         """[Scenario Step 3] 모델 갤러리를 열고 선택 시 즉시 부팅 시퀀스 유도"""
         from ui.model_gallery import ModelGalleryDialog
         dlg = ModelGalleryDialog(
@@ -812,6 +812,7 @@ class DashUI(QWidget):
             parent=self,
             dl_workers=self.ctrl._dl_workers
         )
+        # TODO: preferred_engine에 따라 UI 강조 로직 추가 가능
         # 선택 시 대시보드 업데이트 + 신호 발생 (컨트롤러가 이를 가로채서 부팅함)
         dlg.model_selected.connect(self.set_active_model)
         dlg.install_requested.connect(self.ctrl._handle_download_request)
