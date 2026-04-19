@@ -31,4 +31,3 @@ class BenchmarkSession:
     boot_config: BootstrapConfig
     stress_config: StressOptions
     run_mode: str = "Inference Mode (Default)"
-    judge_key: str = ""

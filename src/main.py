@@ -191,7 +191,6 @@ class AMEVAController(QMainWindow):
         self.active_session.boot_config.model_name = model_name
         self.active_session.boot_config.engine     = self.view_dash.get_active_engine()
         self.active_session.run_mode               = self.view_dash.mode_combo.currentText()
-        self.active_session.judge_key              = self.view_dash.api_key_input.text().strip()
 
         # [Smart SWAP] 엔진/모델 변경 시 자동 재부팅
         if self._last_booted_model != model_name:
@@ -272,7 +271,6 @@ class AMEVAController(QMainWindow):
 
         self.active_session.boot_config.model_name = model_name
         self.active_session.boot_config.engine     = self.view_dash.get_active_engine()
-        self.active_session.judge_key = self.view_dash.api_key_input.text().strip()
 
         # [Smart SWAP] 채팅 중에도 모델 변경 시 재부팅
         if self._last_booted_model != model_name:

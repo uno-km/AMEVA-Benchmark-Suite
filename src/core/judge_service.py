@@ -74,23 +74,11 @@ class JudgeService:
                     chunk_callback(f"\n[⚠ 판정 실패]: {err_msg}")
                 return {"score": 0, "reason": err_msg}
 
-        # 2. 원격 판정 (OpenAI)
+        # 2. 원격 판정 (제거됨 - 로컬 전용)
         else:
-            try:
-                # system_prompt 필드에 API Key가 들어있다고 가정 (현재 UI 구조상)
-                api_key = stress_config.system_prompt 
-                client = OpenAI(api_key=api_key)
-                res = client.chat.completions.create(
-                    model=judge_model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_content}
-                    ],
-                    response_format={ "type": "json_object" }
-                )
-                return json.loads(res.choices[0].message.content)
-            except Exception as e:
-                return {"score": 0, "reason": f"Remote Judge Error: {e}"}
+            msg = "⚠ 현재 버전은 로컬 Ollama 판정용 모델만 지원합니다."
+            if chunk_callback: chunk_callback(f"\n{msg}")
+            return {"score": 0, "reason": msg}
 
     @staticmethod
     def _extract_json(text: str) -> dict:

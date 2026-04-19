@@ -161,19 +161,11 @@ class DashUI(QWidget):
         cl.addWidget(QLabel("Protocol:"))
         cl.addWidget(self.mode_combo)
 
-        self.api_key_input = QLineEdit()
-        self.api_key_input.setPlaceholderText("LLM Judge API Key")
-        self.api_key_input.setEchoMode(QLineEdit.Password)
-        self.api_key_input.setFixedWidth(150)
-        cl.addWidget(self.api_key_input)
-
-        # ── Judge 선택 ────────────────────────────────────────────────
         self.judge_combo = QComboBox()
         self.judge_combo.addItems([
             "exaone3:7.8b",
             "qwen2.5:3b",
-            "llama3.2:3b",
-            "gpt-4o-mini"
+            "llama3.2:3b"
         ])
         self.judge_combo.setFixedWidth(110)
         self.judge_combo.setToolTip("결과를 채점할 AI 판정관 모델 선택")

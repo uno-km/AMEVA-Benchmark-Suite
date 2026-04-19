@@ -185,13 +185,12 @@ class ChatBenchmarkEngine(QThread):
 
         # [Judge My Chat] 실시간 채팅 비평 로직 가동
         if session.stress_config.judge_model:
-            # [Engineering] 격리 정책상 GGUF(ENG) 기동 중에는 Ollama 사이드카 호출 불가 안내
+            # [Engineering] 격리 정책 완화: GGUF(ENG) 기동 중에도 사용자가 원하면 판정관(Ollama) 호출 시도
             if engine_type == "ENG":
-                self._slog("ℹ️ [INFO] 격리 모드(ENG)에서는 실시간 판정관 호출이 제한됩니다. (하네스 전용)")
-                result["Judge_Score"] = "N/A"
-                result["Judge_Reason"] = "GGUF Isolation mode: Judge requires Ollama engine."
-            else:
-                self._slog(f"🧠 판정관 호출 중: {session.stress_config.judge_model}")
+                self._slog("ℹ️ [INFO] 격리 모드(ENG): 판정관(Ollama) 호출 시 GPU 자원 경합이 발생할 수 있습니다.")
+            
+            self._slog(f"🧠 판정관 호출 중: {session.stress_config.judge_model}")
+            try:
                 score_data = JudgeService.call_llm_judge(
                     self._prompt, 
                     text_acc, 
@@ -200,9 +199,17 @@ class ChatBenchmarkEngine(QThread):
                 )
                 result["Judge_Score"] = score_data.get("score", 0)
                 result["Judge_Reason"] = score_data.get("reason", "")
-            
-            # 최종 결과 리포트 업데이트
-            self._slog(f"🏆 채팅 판정 결과: {result['Judge_Score']}/10")
+                
+                if result["Judge_Score"] == 0 and "⚠" in result["Judge_Reason"]:
+                    self._slog(f"❌ 판정관 가동 실패: {result['Judge_Reason']}")
+                else:
+                    self._slog(f"🏆 채팅 판정 완료: {result['Judge_Score']}/10")
+            except Exception as e:
+                self._slog(f"❌ 판정관 호출 중 치명적 오류: {e}")
+                result["Judge_Score"] = 0
+                result["Judge_Reason"] = f"Error: {e}"
+        else:
+            self._slog("ℹ️ [INFO] 판정관 모델이 설정되지 않아 채점을 건너뜁니다.")
 
         # CSV 즉시 삽입
         try:
