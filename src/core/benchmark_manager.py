@@ -445,8 +445,16 @@ class ExecutionEngine(QThread):
             cat_scores[cat].append(score)
             
         for cat, scores in cat_scores.items():
-            c_avg = sum(scores)/len(scores)
-            self._log(f"{cat:<15} | {c_avg:<10.2f} | PASS")
+            # [Fix] 숫자형 점수만 추출하여 평균 계산 (문자열 점수 "PASS", "N/A" 등 제외)
+            numeric_scores = [s for s in scores if isinstance(s, (int, float))]
+            if numeric_scores:
+                c_avg = sum(numeric_scores) / len(numeric_scores)
+                status_text = f"{c_avg:.2f}"
+            else:
+                # 숫자가 없으면 첫 번째 값(N/A 등) 표시
+                status_text = str(scores[0]) if scores else "N/A"
+            
+            self._log(f"{cat:<15} | {status_text:<10} | OK")
             
         self._log("-" * 50)
         self._log(f"⭐ TOTAL AVERAGE: {avg_score:.2f} / 10.0")
