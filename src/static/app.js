@@ -15,12 +15,13 @@ const gpuHistory = [];
 const historyLimit = 50;
 
 // Initialize
-window.addEventListener('DOMContentLoaded', () => {
+window.addEventListener('DOMContentLoaded', async () => {
     initWebSockets();
     startSessionStatusPolling();
     loadReports();
     initCanvas();
-    loadConfigFromBackend();
+    await loadConfigFromBackend();
+    await loadOllamaJudgeModels();
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -224,6 +225,50 @@ async function loadConfigFromBackend() {
     }
 }
 
+async function loadOllamaJudgeModels() {
+    try {
+        const select = document.getElementById('select-judge-model');
+        const currentSelectedVal = document.getElementById('stress-judgemodel').value;
+        
+        // 로딩 표시
+        select.innerHTML = '<option value="">-- 모델 로딩 중... --</option>';
+        
+        const resp = await fetch('/api/models/installed-ollama');
+        const data = await resp.json();
+        
+        select.innerHTML = '<option value="">-- 설치된 Ollama 모델 선택 --</option>';
+        
+        if (data.models && data.models.length > 0) {
+            data.models.forEach(modelName => {
+                const opt = document.createElement('option');
+                opt.value = modelName;
+                opt.innerText = modelName;
+                if (modelName === currentSelectedVal) {
+                    opt.selected = true;
+                }
+                select.appendChild(opt);
+            });
+        } else {
+            const opt = document.createElement('option');
+            opt.value = "";
+            opt.innerText = "-- 설치된 모델 없음 (Ollama 기동 확인) --";
+            select.appendChild(opt);
+        }
+    } catch(e) {
+        console.error("Failed to load Ollama judge models", e);
+        const select = document.getElementById('select-judge-model');
+        select.innerHTML = '<option value="">-- 에러 발생 (재시도: 🔄) --</option>';
+    }
+}
+
+function syncJudgeModelSelect() {
+    const select = document.getElementById('select-judge-model');
+    const input = document.getElementById('stress-judgemodel');
+    if (select.value) {
+        input.value = select.value;
+    }
+}
+
 async function saveJudgeModel() {
     const judgeModel = document.getElementById('stress-judgemodel').value.trim();
     if (!judgeModel) {
@@ -361,8 +406,14 @@ async function checkSessionStatus() {
             statusText.innerText = `오프라인 - 커널 동작 정지 상태`;
             document.getElementById('btn-boot').disabled = false;
             document.getElementById('btn-shutdown').disabled = true;
-            document.getElementById('active-model-display').innerText = "미선택 (OFFLINE)";
-            document.getElementById('active-model-display').style.color = "var(--text-muted)";
+
+            if (currentActiveModel) {
+                document.getElementById('active-model-display').innerText = `${currentActiveModel} (대기중)`;
+                document.getElementById('active-model-display').style.color = "var(--warn)";
+            } else {
+                document.getElementById('active-model-display').innerText = "미선택 (OFFLINE)";
+                document.getElementById('active-model-display').style.color = "var(--text-muted)";
+            }
 
             if (chatInput) {
                 chatInput.disabled = true;

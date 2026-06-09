@@ -369,3 +369,12 @@ def cancel_download(model_id: str):
             active_downloads[model_id]["cancel_event"].set()
             return {"status": "cancelling", "model_id": model_id}
     return {"status": "not_active", "model_id": model_id}
+
+@router.get("/api/models/installed-ollama")
+def get_installed_ollama_models():
+    """로컬 Ollama에 설치된 모델 목록 조회"""
+    try:
+        models = OllamaClient.list_local_models()
+        return {"models": [m["name"] for m in models]}
+    except Exception as e:
+        return {"models": [], "error": str(e)}

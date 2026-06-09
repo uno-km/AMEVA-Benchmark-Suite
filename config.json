@@ -1,0 +1,9 @@
+{
+    "vault_dir": "c:/ameva/models/llm",
+    "bit_vault_dir": "c:/ameva/models/bitnet",
+    "default_judge_model": "deepseek-r1:7b",
+    "last_used_engine": "ENG",
+    "last_used_cores": 2.0,
+    "last_used_ram": 4096,
+    "last_used_gpu_layers": 0
+}

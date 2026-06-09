@@ -638,7 +638,7 @@ def _run_inference_mode(req: RunBenchmarkRequest):
     state.boot_message = "READY"
     time.sleep(1.0)
 
-    broadcaster.log(f"🧠 판정관 가동: {req.stress_config.judge_model}", "bench")
+    broadcaster.log(f"🧠 판정관 가동: {state.stress_config.judge_model}", "bench")
     
     final_scores = []
     try:
@@ -647,7 +647,7 @@ def _run_inference_mode(req: RunBenchmarkRequest):
                 score_data = JudgeService.call_llm_judge(
                     res["prompt_text"], 
                     res["response_text"], 
-                    req.stress_config,
+                    state.stress_config,
                     chunk_callback=lambda tok: broadcaster.log(tok, "chunk")
                 )
                 res["judge_score"]  = str(score_data.get("score", 0))
@@ -701,7 +701,7 @@ def _run_inference_mode(req: RunBenchmarkRequest):
             datetime.now().strftime("%Y-%m-%d %H:%M:%S"), model_name, engine_type,
             req.run_mode, req.boot_config.cpu_cores, req.boot_config.ram_mb, req.boot_config.gpu_layers,
             req.stress_config.threads, req.stress_config.n_ctx, req.stress_config.temperature,
-            req.stress_config.repeat_penalty, req.stress_config.system_prompt, req.stress_config.judge_model
+            req.stress_config.repeat_penalty, req.stress_config.system_prompt, state.stress_config.judge_model
         ))
         run_id = cursor.lastrowid
         
