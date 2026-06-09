@@ -521,7 +521,7 @@ def _run_inference_mode(req: RunBenchmarkRequest):
         try:
             if engine_type == "BIT":
                 if state.engine.container:
-                    from core.models_data import get_filename_by_id
+                    from core.constants import get_filename_by_id
                     model_file = get_filename_by_id(model_name)
                     cmd = f'python3 run_inference.py -m /vault/{model_file} -p "{formatted_prompt}" -n 200'
                     exit_code, output = state.engine.container.exec_run(cmd)
@@ -798,7 +798,7 @@ def run_chat_worker(req: ChatRequest):
     try:
         if engine_type == "BIT":
             if state.engine.container:
-                from core.models_data import get_filename_by_id
+                from core.constants import get_filename_by_id
                 model_file = get_filename_by_id(model_name)
                 cmd = f'python3 run_inference.py -m /vault/{model_file} -p "{formatted_prompt}" -n 200'
                 exit_code, output = state.engine.container.exec_run(cmd)

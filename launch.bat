@@ -1,4 +1,4 @@
-﻿@echo off
+@echo off
 setlocal enabledelayedexpansion
 :: [중요] UTF-8 환경으로 강제 전환 (Matrix 콘솔 글깨짐 방지)
 chcp 65001 >nul
@@ -117,7 +117,7 @@ set "PYTHONUNBUFFERED=1"
 :: set "QT_DEBUG_PLUGINS=1"
 
 :: 실행!
-python src\main.py
+python src\app_launcher.py
 
 :: 실행 종료 후 안전한 자원 해제
 deactivate

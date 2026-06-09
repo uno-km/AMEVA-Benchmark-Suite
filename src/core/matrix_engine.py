@@ -4,9 +4,10 @@ import os
 from typing import Optional, Callable, Dict, Tuple
 from core.constants import (
     OLLAMA_BASE_URL, LLAMA_CPP_HOST, LLAMA_CPP_PORT,
-    get_vault_abs_path, get_bit_vault_abs_path, INTERNAL_VAULT_PATH
+    get_vault_abs_path, get_bit_vault_abs_path, INTERNAL_VAULT_PATH,
+    get_filename_by_id
 )
-from core.models_data import get_filename_by_id
+
 
 
 class MatrixEngine:
