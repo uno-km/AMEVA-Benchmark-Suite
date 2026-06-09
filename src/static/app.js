@@ -454,39 +454,50 @@ async function loadGalleryModels() {
                 const right = document.createElement('div');
                 right.className = 'model-card-actions';
 
-                // GGUF Download / Select
-                const ggufBtn = document.createElement('button');
-                ggufBtn.className = 'btn';
-                if (model.gguf_installed) {
-                    ggufBtn.classList.add('btn-primary');
-                    ggufBtn.innerText = "▶ 사용 (GGUF)";
-                    ggufBtn.onclick = () => selectModel(model.id, currentActiveEngine === 'BIT' ? 'BIT' : 'ENG');
-                } else if (model.download.status === 'downloading' && currentActiveEngine !== 'OLM') {
-                    ggufBtn.innerText = "⏳ 취소";
-                    ggufBtn.classList.add('btn-danger');
-                    ggufBtn.onclick = () => cancelDownload(model.id);
+                if (model.unregistered) {
+                    const regBtn = document.createElement('button');
+                    regBtn.className = 'btn';
+                    regBtn.style.backgroundColor = 'var(--warn)';
+                    regBtn.style.borderColor = 'var(--warn)';
+                    regBtn.style.color = 'white';
+                    regBtn.innerText = "➕ 등록하기";
+                    regBtn.onclick = () => openRegisterModelModal(model);
+                    right.appendChild(regBtn);
                 } else {
-                    ggufBtn.innerText = "📦 GGUF 다운로드";
-                    ggufBtn.onclick = () => downloadModel(model.id, false, currentActiveEngine === 'BIT' ? 'BIT' : 'ENG');
-                }
-                right.appendChild(ggufBtn);
+                    // GGUF Download / Select
+                    const ggufBtn = document.createElement('button');
+                    ggufBtn.className = 'btn';
+                    if (model.gguf_installed) {
+                        ggufBtn.classList.add('btn-primary');
+                        ggufBtn.innerText = "▶ 사용 (GGUF)";
+                        ggufBtn.onclick = () => selectModel(model.id, currentActiveEngine === 'BIT' ? 'BIT' : 'ENG');
+                    } else if (model.download.status === 'downloading' && currentActiveEngine !== 'OLM') {
+                        ggufBtn.innerText = "⏳ 취소";
+                        ggufBtn.classList.add('btn-danger');
+                        ggufBtn.onclick = () => cancelDownload(model.id);
+                    } else {
+                        ggufBtn.innerText = "📦 GGUF 다운로드";
+                        ggufBtn.onclick = () => downloadModel(model.id, false, currentActiveEngine === 'BIT' ? 'BIT' : 'ENG');
+                    }
+                    right.appendChild(ggufBtn);
 
-                // Ollama Pull / Select
-                const ollamaBtn = document.createElement('button');
-                ollamaBtn.className = 'btn';
-                if (model.ollama_installed) {
-                    ollamaBtn.classList.add('btn-accent');
-                    ollamaBtn.innerText = "▶ 사용 (Ollama)";
-                    ollamaBtn.onclick = () => selectModel(model.ollama_tag, 'OLM');
-                } else if (model.download.status === 'downloading' && currentActiveEngine === 'OLM') {
-                    ollamaBtn.innerText = "⏳ 취소";
-                    ollamaBtn.classList.add('btn-danger');
-                    ollamaBtn.onclick = () => cancelDownload(model.id);
-                } else {
-                    ollamaBtn.innerText = "🦙 Ollama 풀링";
-                    ollamaBtn.onclick = () => downloadModel(model.id, true, 'OLM');
+                    // Ollama Pull / Select
+                    const ollamaBtn = document.createElement('button');
+                    ollamaBtn.className = 'btn';
+                    if (model.ollama_installed) {
+                        ollamaBtn.classList.add('btn-accent');
+                        ollamaBtn.innerText = "▶ 사용 (Ollama)";
+                        ollamaBtn.onclick = () => selectModel(model.ollama_tag, 'OLM');
+                    } else if (model.download.status === 'downloading' && currentActiveEngine === 'OLM') {
+                        ollamaBtn.innerText = "⏳ 취소";
+                        ollamaBtn.classList.add('btn-danger');
+                        ollamaBtn.onclick = () => cancelDownload(model.id);
+                    } else {
+                        ollamaBtn.innerText = "🦙 Ollama 풀링";
+                        ollamaBtn.onclick = () => downloadModel(model.id, true, 'OLM');
+                    }
+                    right.appendChild(ollamaBtn);
                 }
-                right.appendChild(ollamaBtn);
 
                 card.appendChild(right);
                 cardsDiv.appendChild(card);
@@ -1134,4 +1145,132 @@ function unescapeHtml(text) {
          .replace(/&quot;/g, '"')
          .replace(/&#039;/g, "'")
          .replace(/&amp;/g, "&");
+}
+
+function openRegisterModelModal(model = null) {
+    const titleEl = document.getElementById('register-modal-title');
+    const idInput = document.getElementById('reg-model-id');
+    const nameInput = document.getElementById('reg-display-name');
+    const catSelect = document.getElementById('reg-category');
+    const tagInput = document.getElementById('reg-tag');
+    const descText = document.getElementById('reg-description');
+    const ramInput = document.getElementById('reg-min-ram-gb');
+    const sizeInput = document.getElementById('reg-size-gb');
+    const fileInput = document.getElementById('reg-filename');
+    const ollamaInput = document.getElementById('reg-ollama-tag');
+    const urlInput = document.getElementById('reg-hf-url');
+
+    // Reset readonly status
+    idInput.readOnly = false;
+    fileInput.readOnly = false;
+    ollamaInput.readOnly = false;
+
+    if (!model) {
+        titleEl.innerText = "➕ 기타 모델 직접 등록";
+        idInput.value = "";
+        nameInput.value = "";
+        catSelect.value = "Medium";
+        tagInput.value = "";
+        descText.value = "";
+        ramInput.value = "4.0";
+        sizeInput.value = "0.0";
+        fileInput.value = "";
+        ollamaInput.value = "";
+        urlInput.value = "";
+    } else {
+        titleEl.innerText = "➕ 미등록 모델 등록";
+        
+        // Clean up temporary ID prefix if present
+        let cleanId = model.id;
+        if (cleanId.startsWith("ext-gguf-")) cleanId = cleanId.substring(9);
+        if (cleanId.startsWith("ext-ollama-")) cleanId = cleanId.substring(11);
+        
+        idInput.value = cleanId;
+        nameInput.value = model.display.replace(".gguf", "");
+        catSelect.value = model.category || "Medium";
+        tagInput.value = "📦 외부 등록 모델";
+        descText.value = model.desc || "";
+        ramInput.value = model.min_ram_gb || "4.0";
+        sizeInput.value = model.size_gb || "0.0";
+        fileInput.value = model.filename || "";
+        ollamaInput.value = model.ollama_tag || "";
+        urlInput.value = model.hf_url || "";
+
+        // Make filename or ollama_tag readonly if they are pre-populated
+        if (model.filename) {
+            fileInput.readOnly = true;
+        }
+        if (model.ollama_tag) {
+            ollamaInput.readOnly = true;
+        }
+    }
+
+    document.getElementById('modal-model-register').classList.add('active');
+}
+
+async function submitModelRegistration() {
+    const idInput = document.getElementById('reg-model-id');
+    const nameInput = document.getElementById('reg-display-name');
+    const catSelect = document.getElementById('reg-category');
+    const tagInput = document.getElementById('reg-tag');
+    const descText = document.getElementById('reg-description');
+    const ramInput = document.getElementById('reg-min-ram-gb');
+    const sizeInput = document.getElementById('reg-size-gb');
+    const fileInput = document.getElementById('reg-filename');
+    const ollamaInput = document.getElementById('reg-ollama-tag');
+    const urlInput = document.getElementById('reg-hf-url');
+
+    const modelId = idInput.value.trim();
+    const displayName = nameInput.value.trim();
+    const filename = fileInput.value.trim();
+    const ollamaTag = ollamaInput.value.trim();
+
+    if (!modelId || !displayName) {
+        alert("모델 고유 ID와 표시용 이름을 입력해 주세요.");
+        return;
+    }
+
+    // 간단한 ID 검증 (공백 없어야 함 등)
+    if (!/^[a-zA-Z0-9\-_.]+$/.test(modelId)) {
+        alert("모델 고유 ID는 영문자, 숫자, 하이픈(-), 언더바(_), 마침표(.)만 포함해야 합니다.");
+        return;
+    }
+
+    if (!filename && !ollamaTag) {
+        alert("GGUF 파일명 또는 Ollama 태그 중 최소 하나는 입력해야 사용이 가능합니다.");
+        return;
+    }
+
+    const payload = {
+        model_id: modelId,
+        display_name: displayName,
+        category: catSelect.value,
+        tag: tagInput.value.trim(),
+        description: descText.value.trim(),
+        min_ram_gb: parseFloat(ramInput.value) || 2.0,
+        size_gb: parseFloat(sizeInput.value) || 0.0,
+        filename: filename,
+        ollama_tag: ollamaTag,
+        hf_url: urlInput.value.trim()
+    };
+
+    try {
+        const resp = await fetch('/api/models/register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        if (resp.ok) {
+            alert(`모델 등록 성공: ${modelId}`);
+            closeModal('model-register');
+            // 리로드
+            await loadGalleryModels();
+        } else {
+            const err = await resp.json();
+            alert(`등록 실패: ${err.detail || '알 수 없는 오류'}`);
+        }
+    } catch (e) {
+        alert(`네트워크 통신 오류: ${e}`);
+    }
 }

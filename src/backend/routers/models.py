@@ -4,15 +4,21 @@ import threading
 import requests
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel
-from core.models_data import MODEL_CATALOGUE, CATEGORY_META
+from typing import List, Dict, Any
 from core.constants import get_vault_abs_path, get_bit_vault_abs_path
 from core.ollama_client import OllamaClient
 from backend.routers.logs import broadcaster
+from backend.database import get_db_connection
 
 router = APIRouter()
 
+CATEGORY_META = {
+    "Lite":   {"icon": "⚡", "color": "#10b981", "desc": "RAM 2~3GB  |  즉시 실행 가능  |  CPU 전용 환경 OK"},
+    "Medium": {"icon": "⚙️", "color": "#3b82f6", "desc": "RAM 4~6GB  |  일상 노트북 권장  |  4코어 이상"},
+    "Heavy":  {"icon": "🔥", "color": "#f59e0b", "desc": "RAM 8GB+   |  고성능 워크스테이션  |  GPU 권장"},
+}
+
 # 전역 다운로드 태스크 관리용
-# 구조: { model_id: { "progress": int, "status": str, "cancel_event": threading.Event } }
 active_downloads = {}
 downloads_lock = threading.Lock()
 
@@ -21,14 +27,36 @@ class DownloadRequest(BaseModel):
     is_ollama: bool = False
     engine_type: str = "ENG"
 
+class ModelRegisterSchema(BaseModel):
+    model_id: str
+    display_name: str
+    category: str
+    tag: str = ""
+    description: str = ""
+    min_ram_gb: float = 2.0
+    size_gb: float = 0.0
+    filename: str = ""
+    ollama_tag: str = ""
+    hf_url: str = ""
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Workers
+# ─────────────────────────────────────────────────────────────────────────────
+
 def download_gguf_worker(model_info: dict, dest_dir: str, cancel_event: threading.Event):
-    model_id = model_info["id"]
+    model_id = model_info["model_id"]
     url = model_info["hf_url"]
     fname = model_info["filename"]
     path = os.path.join(dest_dir, fname)
 
+    if not url:
+        broadcaster.log(f"[DL Error] 다운로드 URL이 지정되지 않았습니다: {fname}")
+        with downloads_lock:
+            active_downloads[model_id]["status"] = "failed"
+        return
+
     os.makedirs(dest_dir, exist_ok=True)
-    broadcaster.log(f"[DL] 다운로드 시작: {fname}")
+    broadcaster.log(f"[DL] GGUF 다운로드 시작: {fname}")
 
     try:
         resp = requests.get(url, stream=True, timeout=30)
@@ -55,7 +83,19 @@ def download_gguf_worker(model_info: dict, dest_dir: str, cancel_event: threadin
                     with downloads_lock:
                         active_downloads[model_id]["progress"] = pct
 
-        broadcaster.log(f"[DL] 다운로드 완료: {fname}")
+        broadcaster.log(f"[DL] GGUF 다운로드 완료: {fname}")
+        
+        # 파일 크기 업데이트
+        try:
+            sz_gb = round(os.path.getsize(path) / (1024**3), 1)
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("UPDATE model_registry SET size_gb = ? WHERE model_id = ?;", (sz_gb, model_id))
+            conn.commit()
+            conn.close()
+        except:
+            pass
+
         with downloads_lock:
             active_downloads[model_id]["status"] = "success"
             active_downloads[model_id]["progress"] = 100
@@ -70,7 +110,7 @@ def download_gguf_worker(model_info: dict, dest_dir: str, cancel_event: threadin
             active_downloads[model_id]["status"] = "failed"
 
 def download_ollama_worker(model_info: dict, cancel_event: threading.Event):
-    model_id = model_info["id"]
+    model_id = model_info["model_id"]
     tag = model_info["ollama_tag"]
     broadcaster.log(f"[OLM] 풀링 시작: {tag}")
 
@@ -114,54 +154,192 @@ def download_ollama_worker(model_info: dict, cancel_event: threading.Event):
         with downloads_lock:
             active_downloads[model_id]["status"] = "failed"
 
+# ─────────────────────────────────────────────────────────────────────────────
+# API Endpoints
+# ─────────────────────────────────────────────────────────────────────────────
+
 @router.get("/api/models")
 def get_models():
-    """모델 목록 및 각각의 다운로드 상태 반환"""
+    """모델 목록 스캔 및 각각의 다운로드 상태 반환"""
     vault_dir = get_vault_abs_path()
     bit_vault_dir = get_bit_vault_abs_path()
     
-    ollama_models = [m["name"] for m in OllamaClient.list_local_models()]
+    # 1. 로컬 디렉토리 파일 스캔
+    local_ggufs = []
+    if os.path.exists(vault_dir):
+        local_ggufs += [f for f in os.listdir(vault_dir) if f.endswith(".gguf")]
     
+    local_bitnets = []
+    if os.path.exists(bit_vault_dir):
+        local_bitnets += [f for f in os.listdir(bit_vault_dir) if f.endswith(".gguf")]
+        
+    # 2. 로컬 Ollama 모델 조회
+    ollama_models = []
+    try:
+        ollama_models = [m["name"] for m in OllamaClient.list_local_models()]
+    except:
+        pass
+
+    # 3. DB 등록 모델 리스트 조회
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM model_registry;")
+    db_models = [dict(r) for r in cursor.fetchall()]
+    conn.close()
+
     results = []
-    for m in MODEL_CATALOGUE:
-        # GGUF 파일이 로컬에 있는지 확인
-        dest_dir = bit_vault_dir if m.get("category") == "Heavy" and "bitnet" in m["id"] else vault_dir
-        gguf_path = os.path.join(dest_dir, m["filename"])
-        gguf_installed = os.path.isfile(gguf_path)
+    registered_filenames = set()
+    registered_ollama_tags = set()
+
+    # DB에 있는 등록 완료 모델들 검증
+    for m in db_models:
+        model_id = m["model_id"]
+        filename = m.get("filename") or ""
+        ollama_tag = m.get("ollama_tag") or ""
         
-        # Ollama 모델이 설치되어 있는지 확인
-        ollama_installed = (m["ollama_tag"] in ollama_models) or (f"{m['ollama_tag']}:latest" in ollama_models)
-        
-        # 현재 다운로드 진행 정보
+        if filename:
+            registered_filenames.add(filename)
+        if ollama_tag:
+            registered_ollama_tags.add(ollama_tag)
+            registered_ollama_tags.add(f"{ollama_tag}:latest")
+            if ":" in ollama_tag:
+                registered_ollama_tags.add(ollama_tag.split(":")[0])
+
+        # 파일 경로 확인
+        gguf_installed = False
+        if filename:
+            is_bitnet = (m["category"] == "Heavy" and "bitnet" in model_id) or ("bitnet" in filename.lower())
+            dest_dir = bit_vault_dir if is_bitnet else vault_dir
+            gguf_installed = os.path.isfile(os.path.join(dest_dir, filename))
+
+        # Ollama 확인
+        ollama_installed = False
+        if ollama_tag:
+            ollama_installed = (ollama_tag in ollama_models) or (f"{ollama_tag}:latest" in ollama_models)
+
+        # 다운로드 현황 병합
         dl_info = {"status": "idle", "progress": 0}
         with downloads_lock:
-            if m["id"] in active_downloads:
-                dl_info["status"] = active_downloads[m["id"]]["status"]
-                dl_info["progress"] = active_downloads[m["id"]]["progress"]
-        
+            if model_id in active_downloads:
+                dl_info["status"] = active_downloads[model_id]["status"]
+                dl_info["progress"] = active_downloads[model_id]["progress"]
+
         results.append({
-            "id": m["id"],
-            "display": m["display"],
+            "id": model_id,
+            "display": m["display_name"],
             "category": m["category"],
-            "tag": m["tag"],
-            "desc": m["desc"],
-            "min_ram_gb": m["min_ram_gb"],
-            "size_gb": m["size_gb"],
-            "filename": m["filename"],
-            "ollama_tag": m["ollama_tag"],
+            "tag": m["tag"] or "",
+            "desc": m["description"] or "",
+            "min_ram_gb": m["min_ram_gb"] or 2.0,
+            "size_gb": m["size_gb"] or 0.0,
+            "filename": filename,
+            "ollama_tag": ollama_tag,
             "gguf_installed": gguf_installed,
             "ollama_installed": ollama_installed,
-            "download": dl_info
+            "download": dl_info,
+            "unregistered": False
         })
+
+    # 4. 미등록 GGUF 파일 발견 시 리스트에 추가 (External)
+    all_local_files = [("ENG", f, vault_dir) for f in local_ggufs] + [("BIT", f, bit_vault_dir) for f in local_bitnets]
+    for engine_type, fname, fdir in all_local_files:
+        if fname not in registered_filenames:
+            size_bytes = os.path.getsize(os.path.join(fdir, fname))
+            size_gb = round(size_bytes / (1024**3), 1)
+            
+            clean_id = fname.lower().replace(".gguf", "").replace("_", "-").replace(" ", "-")
+            temp_id = f"ext-gguf-{clean_id}"
+            
+            results.append({
+                "id": temp_id,
+                "display": fname,
+                "category": "Lite", 
+                "tag": "📦 발견된 외부 GGUF",
+                "desc": f"로컬 폴더에서 검색되었으나 DB에 등록되지 않은 모델 파일입니다. 정상 활용하려면 [등록하기]를 눌러 스펙을 기입하세요.",
+                "min_ram_gb": 4.0,
+                "size_gb": size_gb,
+                "filename": fname,
+                "ollama_tag": "",
+                "gguf_installed": True,
+                "ollama_installed": False,
+                "download": {"status": "idle", "progress": 0},
+                "unregistered": True,
+                "engine_type": engine_type
+            })
+
+    # 5. 미등록 로컬 Ollama 모델 발견 시 리스트에 추가
+    for o_model in ollama_models:
+        if o_model not in registered_ollama_tags:
+            clean_id = o_model.lower().replace(":", "-").replace(".", "-")
+            temp_id = f"ext-ollama-{clean_id}"
+            
+            results.append({
+                "id": temp_id,
+                "display": o_model,
+                "category": "Lite",
+                "tag": "🦙 외부 Ollama",
+                "desc": f"Ollama 내에 존재하나 DB에 등록되지 않은 모델입니다. [등록하기]를 눌러 스펙을 기입하세요.",
+                "min_ram_gb": 4.0,
+                "size_gb": 0.0,
+                "filename": "",
+                "ollama_tag": o_model,
+                "gguf_installed": False,
+                "ollama_installed": True,
+                "download": {"status": "idle", "progress": 0},
+                "unregistered": True,
+                "engine_type": "OLM"
+            })
+
     return {"models": results, "categories": CATEGORY_META}
+
+@router.post("/api/models/register")
+def register_model(req: ModelRegisterSchema):
+    """신규 모델 수동 등록 / 미등록 외부 모델 스펙 추가"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT id FROM model_registry WHERE model_id = ?;", (req.model_id,))
+        if cursor.fetchone():
+            cursor.execute("""
+            UPDATE model_registry
+            SET display_name = ?, category = ?, tag = ?, description = ?, min_ram_gb = ?, size_gb = ?, filename = ?, ollama_tag = ?, hf_url = ?
+            WHERE model_id = ?;
+            """, (
+                req.display_name, req.category, req.tag, req.description,
+                req.min_ram_gb, req.size_gb, req.filename, req.ollama_tag, req.hf_url, req.model_id
+            ))
+            conn.commit()
+            return {"status": "updated", "model_id": req.model_id}
+        else:
+            cursor.execute("""
+            INSERT INTO model_registry (
+                model_id, display_name, category, tag, description, min_ram_gb, size_gb, filename, ollama_tag, hf_url
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            """, (
+                req.model_id, req.display_name, req.category, req.tag, req.description,
+                req.min_ram_gb, req.size_gb, req.filename, req.ollama_tag, req.hf_url
+            ))
+            conn.commit()
+            return {"status": "registered", "model_id": req.model_id}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error during registration: {e}")
+    finally:
+        conn.close()
 
 @router.post("/api/models/download")
 def download_model(req: DownloadRequest, background_tasks: BackgroundTasks):
-    """모델 다운로드 요청 접수"""
-    # 카탈로그에서 모델 정보 조회
-    model_info = next((m for m in MODEL_CATALOGUE if m["id"] == req.model_id), None)
-    if not model_info:
-        raise HTTPException(status_code=404, detail="Model not found in catalogue")
+    """모델 다운로드 요청 접수 (DB 쿼리 적용)"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM model_registry WHERE model_id = ?;", (req.model_id,))
+    row = cursor.fetchone()
+    conn.close()
+    
+    if not row:
+        raise HTTPException(status_code=404, detail="Model specifications not found in DB registry")
+    
+    model_info = dict(row)
 
     with downloads_lock:
         if req.model_id in active_downloads and active_downloads[req.model_id]["status"] == "downloading":

@@ -18,7 +18,25 @@ def db_init():
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # 1. 하네스 태스크 테이블
+    # 1. 모델 레지스트리 테이블
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS model_registry (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        model_id TEXT UNIQUE NOT NULL,
+        display_name TEXT NOT NULL,
+        category TEXT NOT NULL,
+        tag TEXT,
+        description TEXT,
+        min_ram_gb REAL DEFAULT 2.0,
+        size_gb REAL DEFAULT 0.0,
+        filename TEXT,
+        ollama_tag TEXT,
+        hf_url TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    """)
+    
+    # 2. 하네스 태스크 테이블
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS harness_tasks (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -30,7 +48,7 @@ def db_init():
     );
     """)
     
-    # 2. 벤치마크 런 테이블 (공통 정보)
+    # 3. 벤치마크 런 테이블 (공통 정보)
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS benchmark_runs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -50,7 +68,7 @@ def db_init():
     );
     """)
     
-    # 3. 벤치마크 개별 결과 테이블 (태스크별 결과)
+    # 4. 벤치마크 개별 결과 테이블 (태스크별 결과)
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS benchmark_results (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -78,8 +96,31 @@ def db_init():
     conn.commit()
     
     # ── 마이그레이션 수행 ──
+    seed_model_registry(conn)
     migrate_csv_data(conn)
     conn.close()
+
+def seed_model_registry(conn):
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM model_registry;")
+    if cursor.fetchone()[0] == 0:
+        print("[Seed] 기존 MODEL_CATALOGUE 데이터를 model_registry DB에 주입하는 중...")
+        try:
+            from core.models_data import MODEL_CATALOGUE
+            for m in MODEL_CATALOGUE:
+                cursor.execute("""
+                INSERT OR IGNORE INTO model_registry (
+                    model_id, display_name, category, tag, description, min_ram_gb, size_gb, filename, ollama_tag, hf_url
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                """, (
+                    m["id"], m["display"], m["category"], m["tag"], m["desc"],
+                    m["min_ram_gb"], m["size_gb"], m["filename"], m["ollama_tag"], m["hf_url"]
+                ))
+            conn.commit()
+            print("[Seed] 시드 데이터 주입 성공.")
+        except Exception as e:
+            print(f"[Seed Warning] 시드 데이터 삽입 에러: {e}")
+
 
 def safe_float(val):
     if not val:

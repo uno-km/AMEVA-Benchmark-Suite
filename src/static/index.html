@@ -330,7 +330,10 @@
     <div id="modal-gallery" class="modal-overlay">
         <div class="modal">
             <div class="modal-header">
-                <h2>🛠️ 모델 갤러리</h2>
+                <div style="display: flex; align-items: center; gap: 12px;">
+                    <h2 style="margin: 0;">🛠️ 모델 갤러리</h2>
+                    <button class="btn btn-accent" style="padding: 4px 10px; font-size: 11px;" onclick="openRegisterModelModal(null)">➕ 기타 모델 직접 등록</button>
+                </div>
                 <button class="btn" style="padding: 4px 8px;" onclick="closeModal('gallery')">✖</button>
             </div>
             <div class="modal-body" id="gallery-body">
@@ -428,6 +431,79 @@
             <div class="modal-footer">
                 <button class="btn" onclick="closeModal('settings')">취소</button>
                 <button class="btn btn-primary" onclick="saveGlobalSettings()">설정 저장</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: Model Registration -->
+    <div id="modal-model-register" class="modal-overlay">
+        <div class="modal" style="max-width: 600px;">
+            <div class="modal-header">
+                <h2 id="register-modal-title">➕ 모델 등록 및 스펙 편집</h2>
+                <button class="btn" style="padding: 4px 8px;" onclick="closeModal('model-register')">✖</button>
+            </div>
+            <div class="modal-body">
+                <form id="form-model-register" onsubmit="event.preventDefault(); submitModelRegistration();">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="reg-model-id">모델 고유 ID (영어, 숫자, 대시)</label>
+                            <input type="text" id="reg-model-id" required placeholder="예: llama-3.2-1b-custom">
+                        </div>
+                        <div class="form-group">
+                            <label for="reg-display-name">표시용 이름 (Display Name)</label>
+                            <input type="text" id="reg-display-name" required placeholder="예: Llama 3.2 1B (Custom)">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="reg-category">카테고리</label>
+                            <select id="reg-category">
+                                <option value="Lite">Lite (⚡ 저사양/CPU)</option>
+                                <option value="Medium" selected>Medium (⚙️ 고사양 CPU/일반 GPU)</option>
+                                <option value="Heavy">Heavy (🔥 고성능 GPU)</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="reg-tag">요약 태그</label>
+                            <input type="text" id="reg-tag" placeholder="예: 🧠 논리 추론">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="reg-description">모델 상세 설명</label>
+                        <textarea id="reg-description" style="height: 50px; resize: none;" placeholder="모델에 대한 설명을 입력하세요..."></textarea>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="reg-min-ram-gb">최소 RAM 요구사항 (GB)</label>
+                            <input type="number" id="reg-min-ram-gb" value="4.0" step="0.5" min="0.5">
+                        </div>
+                        <div class="form-group">
+                            <label for="reg-size-gb">파일 용량 (GB)</label>
+                            <input type="number" id="reg-size-gb" value="0.0" step="0.1" min="0.0">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="reg-filename">GGUF 파일명 (로컬 파일 매칭용)</label>
+                            <input type="text" id="reg-filename" placeholder="예: llama-3.2-1b.gguf">
+                        </div>
+                        <div class="form-group">
+                            <label for="reg-ollama-tag">Ollama 태그 (Ollama 실행용)</label>
+                            <input type="text" id="reg-ollama-tag" placeholder="예: llama3.2:1b">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="reg-hf-url">Hugging Face 다운로드 URL (선택사항)</label>
+                        <input type="text" id="reg-hf-url" placeholder="예: https://huggingface.co/...">
+                    </div>
+                    <div style="font-size:11px; color:var(--text-muted); margin-top:8px;">
+                        * 발견된 외부 모델의 경우 파일명 또는 Ollama 태그가 읽기 전용(readonly)으로 제한될 수 있습니다.
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" onclick="closeModal('model-register')">취소</button>
+                <button class="btn btn-accent" onclick="submitModelRegistration()">💾 등록/저장</button>
             </div>
         </div>
     </div>
