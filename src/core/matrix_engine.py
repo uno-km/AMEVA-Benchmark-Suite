@@ -150,19 +150,18 @@ class MatrixEngine:
             )
             self._log(f"✓ 컨테이너 시작됨 [ID: {self.container.short_id}]")
 
-            # Stream container startup logs (up to 10s)
-            self._log("─── 컨테이너 부팅 로그 스트림 ───")
-            deadline = time.time() + 10
+            # Get initial container logs (non-blocking)
+            self._log("─── 컨테이너 부팅 로그 (초기) ───")
+            import time
+            time.sleep(2.0)  # Wait briefly for startup logs
             try:
-                for raw in self.container.logs(stream=True, follow=True):
-                    line = raw.decode('utf-8', errors='replace').strip()
-                    if line:
-                        self._log(f"[CTR] {line}")
-                    if time.time() > deadline:
-                        self._log("─── (스트림 10초 상한 도달, 백그라운드 계속 실행) ───")
-                        break
+                logs = self.container.logs(stream=False, tail=20)
+                if logs:
+                    for line in logs.decode('utf-8', errors='replace').split('\n'):
+                        if line.strip():
+                            self._log(f"[CTR] {line.strip()}")
             except Exception as le:
-                self._log(f"[WARN] 로그 스트리밍 중단: {le}")
+                self._log(f"[WARN] 로그 가져오기 실패: {le}")
 
             self._log(f"✓ 커널 온라인. 명령 대기 상태.")
             

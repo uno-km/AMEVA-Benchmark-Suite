@@ -222,12 +222,18 @@ function handleCanvasHover(e) {
 function resizeCanvas() {
     if (!canvas || !canvasContainer) return;
     const containerWidth = canvasContainer.clientWidth;
-    const neededWidth = Math.max(containerWidth, cpuHistory.length * 5);
+    const step = 5; // 5px per point
+    const neededWidth = Math.max(containerWidth, cpuHistory.length * step);
     
     if (canvas.width !== neededWidth) {
         canvas.width = neededWidth;
     }
+    // 강제로 CSS width를 픽셀 단위로 고정하여 브라우저의 자동 축소(squishing) 방지
+    canvas.style.width = neededWidth + 'px';
+    canvas.style.minWidth = neededWidth + 'px';
+    
     canvas.height = 120;
+    canvas.style.height = '120px';
     drawTelemetryGraph();
 }
 
