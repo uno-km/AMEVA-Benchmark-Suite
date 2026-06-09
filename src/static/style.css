@@ -635,3 +635,34 @@ footer.status-bar {
 .status-indicator.booting {
     background-color: var(--warn);
 }
+
+/* Floating Log Panel Mode */
+.log-panel.floating-log {
+    position: fixed !important;
+    z-index: 1050;
+    background-color: #0b0f19 !important;
+    border: 2px solid var(--primary) !important;
+    border-radius: 12px;
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.7) !important;
+    resize: both;
+    overflow: hidden !important;
+    display: flex !important;
+    flex-direction: column !important;
+    min-width: 400px;
+    min-height: 250px;
+}
+
+.log-panel.floating-log .log-viewport {
+    flex: 1 !important;
+    height: auto !important;
+}
+
+/* Highlight matching search text */
+.search-highlight {
+    background-color: rgba(245, 158, 11, 0.6) !important; /* Rich Orange/Yellow highlight */
+    color: #ffffff !important;
+    font-weight: bold;
+    border-radius: 2px;
+    padding: 0 2px;
+    border: 1px solid rgba(255,255,255,0.2);
+}

@@ -245,15 +245,38 @@
                         </div>
 
                         <!-- Log & Outputs -->
-                        <div class="log-panel">
-                            <div class="log-tabs">
-                                <button id="log-tab-sys" class="log-tab active" onclick="switchLogTab('sys')">커널 텔레메트리 로그</button>
-                                <button id="log-tab-bench" class="log-tab" onclick="switchLogTab('bench')">벤치마크 진행 로그</button>
-                                <button id="log-tab-stream" class="log-tab" onclick="switchLogTab('stream')">실시간 추론 스트리밍</button>
+                        <div class="log-panel" id="main-log-panel">
+                            <!-- Drag Header (visible only in floating mode) -->
+                            <div id="log-drag-header" class="log-drag-header" style="display: none; background: var(--surface-light); border-bottom: 1px solid var(--border-color); padding: 6px 12px; font-size: 11px; font-weight: 700; color: var(--primary); cursor: move; justify-content: space-between; align-items: center; user-select: none;">
+                                <span>📌 floating log panel (drag here to move, resize bottom-right)</span>
+                                <button class="btn" style="padding: 1px 6px; font-size: 9px; background: var(--danger);" onclick="toggleFloatingLog()">✕ 닫기</button>
                             </div>
-                            <div id="log-viewport-sys" class="log-viewport log-sys"></div>
-                            <div id="log-viewport-bench" class="log-viewport" style="display: none;"></div>
-                            <div id="log-viewport-stream" class="log-viewport" style="display: none;"></div>
+                            <div class="log-tabs" style="display: flex; justify-content: space-between; align-items: center;">
+                                <div style="display: flex;">
+                                    <button id="log-tab-sys" class="log-tab active" onclick="switchLogTab('sys')">커널 텔레메트리 로그</button>
+                                    <button id="log-tab-bench" class="log-tab" onclick="switchLogTab('bench')">벤치마크 진행 로그</button>
+                                    <button id="log-tab-stream" class="log-tab" onclick="switchLogTab('stream')">실시간 추론 스트리밍</button>
+                                </div>
+                                <div style="display: flex; gap: 6px; align-items: center; padding-right: 6px;">
+                                    <!-- Search Container -->
+                                    <div id="log-search-container" style="display: flex; align-items: center; gap: 4px; background: rgba(0,0,0,0.2); border: 1px solid var(--border-color); border-radius: 4px; padding: 2px 6px;">
+                                        <input type="text" id="log-search-input" placeholder="검색 (Ctrl+F)" style="background: transparent; border: none; outline: none; padding: 0; font-size: 10px; color: var(--text-primary); width: 80px;" oninput="searchLogs()">
+                                        <span id="log-search-results" style="font-size: 9px; color: var(--text-muted); min-width: 20px;"></span>
+                                    </div>
+                                    <button class="btn" style="padding: 2px 6px; font-size: 10px; line-height: 1;" onclick="clearActiveLog()" title="로그 비우기">🧹 비우기</button>
+                                    <button id="btn-toggle-float" class="btn" style="padding: 2px 6px; font-size: 10px; line-height: 1;" onclick="toggleFloatingLog()" title="팝업/크기조절 모드 토글">⛶ float</button>
+                                </div>
+                            </div>
+                            <div id="log-viewport-sys" class="log-viewport log-sys" oncontextmenu="showLogContextMenu(event, 'sys')"></div>
+                            <div id="log-viewport-bench" class="log-viewport" style="display: none;" oncontextmenu="showLogContextMenu(event, 'bench')"></div>
+                            <div id="log-viewport-stream" class="log-viewport" style="display: none;" oncontextmenu="showLogContextMenu(event, 'stream')"></div>
+
+                            <!-- Custom Context Menu for Log Clear -->
+                            <div id="log-ctx-menu" style="display: none; position: fixed; z-index: 2000; background: var(--surface-light); border: 1px solid var(--border-color); border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.4); padding: 4px 0;">
+                                <div style="padding: 6px 14px; font-size: 11px; cursor: pointer; color: var(--text-primary); display: flex; align-items: center; gap: 6px;" onclick="clearActiveLog(); hideLogContextMenu();" onmouseover="this.style.background='var(--primary)'" onmouseout="this.style.background='transparent'">
+                                    <span>🧹</span> <span>로그 화면 비우기 (Clear Log)</span>
+                                </div>
+                            </div>
                         </div>
                     </div>
 

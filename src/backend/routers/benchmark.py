@@ -58,6 +58,12 @@ class RunBenchmarkRequest(BaseModel):
     stress_config: StressOptionsSchema
     run_mode: str = "Inference Mode (Default)"
 
+class SyncBenchmarkRequest(BaseModel):
+    boot_config: BootConfigSchema
+    stress_config: StressOptionsSchema
+    run_mode: str = "Inference Mode (Default)"
+    harness_tasks: List["TaskSchema"] = None
+
 class ChatRequest(BaseModel):
     prompt: str
     boot_config: BootConfigSchema
@@ -368,7 +374,7 @@ def run_benchmark_worker(req: RunBenchmarkRequest):
     finally:
         state.active_benchmark_running = False
 
-def _run_stress_mode(req: RunBenchmarkRequest):
+def _run_stress_mode(req: RunBenchmarkRequest) -> tuple[int, list[dict]]:
     broadcaster.log("LLAMA-BENCH 스트레스 테스트 시작", "bench")
     results = []
 
@@ -391,11 +397,12 @@ def _run_stress_mode(req: RunBenchmarkRequest):
     
     if not bench_data:
         broadcaster.log("[에러] 스트레스 테스트에서 데이터를 반환하지 못했습니다.", "bench")
-        return
+        return 0, []
 
     # 데이터베이스 삽입
     conn = get_db_connection()
     cursor = conn.cursor()
+    run_id = 0
     try:
         cursor.execute("""
         INSERT INTO benchmark_runs (
@@ -422,6 +429,18 @@ def _run_stress_mode(req: RunBenchmarkRequest):
                 round(item.get('t/s', 0)/avg_watts, 3) if avg_watts > 0 else 0,
                 0.0, round(item.get('t/s', 0), 2), 0.0, "STRESS", "STRESS", 0.0, "N/A", "N/A"
             ))
+            results.append({
+                "task_name": "Llama-Bench",
+                "category": "STRESS",
+                "prompt_text": "N/A",
+                "response_text": "N/A",
+                "ttft_ms": 0.0,
+                "tps": round(item.get('t/s', 0), 2),
+                "avg_gpu_w": round(avg_watts, 2),
+                "tokens_per_joule": round(item.get('t/s', 0)/avg_watts, 3) if avg_watts > 0 else 0,
+                "judge_score": "N/A",
+                "judge_reason": "N/A"
+            })
         conn.commit()
         broadcaster.log(f"📊 {len(bench_data)}건 스트레스 결과가 SQLite DB에 저장되었습니다.", "bench")
     except Exception as e:
@@ -436,18 +455,21 @@ def _run_stress_mode(req: RunBenchmarkRequest):
     state.boot_status = "OFFLINE"
     state.boot_message = "READY"
     broadcaster.log("✓ 벤치마크 완료 및 엔진 종료.", "bench")
-
-def _run_inference_mode(req: RunBenchmarkRequest):
+    return run_id, results
+def _run_inference_mode(req: RunBenchmarkRequest, tasks_list: list[dict] = None) -> tuple[int, list[dict]]:
     # 하네스 데이터 로드
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT task_id, prompt, expected_regex, eval_type FROM harness_tasks;")
-    dataset = [dict(r) for r in cursor.fetchall()]
-    conn.close()
+    if tasks_list is not None:
+        dataset = tasks_list
+    else:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT task_id, prompt, expected_regex, eval_type FROM harness_tasks;")
+        dataset = [dict(r) for r in cursor.fetchall()]
+        conn.close()
 
     if not dataset:
         broadcaster.log("[에러] 하네스 태스크가 존재하지 않습니다. 먼저 하네스 매니저에서 추가해 주세요.", "bench")
-        return
+        return 0, []
 
     broadcaster.log(f"추론 모드 시작 – 하네스 태스크 {len(dataset)}개", "bench")
     results = []
@@ -475,7 +497,6 @@ def _run_inference_mode(req: RunBenchmarkRequest):
         broadcaster.log(f"====== ### QUESTION: {raw_prompt}", "bench")
         broadcaster.log(f"[STATUS] Running inference on {model_name}...", "bench")
 
-        # task_id가 카테고리를 암시
         cat_name = "General"
         if "-" in task_id:
             cat_name = task_id.split("-")[0]
@@ -493,7 +514,6 @@ def _run_inference_mode(req: RunBenchmarkRequest):
         sample_ms = 0
         tok_count = 0
 
-        raw_prompt = task.get('prompt', 'Hello')
         formatted_prompt = PromptFactory.wrap(raw_prompt, model_name, req.stress_config.system_prompt)
         stop_tokens = get_stop_tokens(model_name)
 
@@ -540,7 +560,6 @@ def _run_inference_mode(req: RunBenchmarkRequest):
                     if ttft == 0: ttft = (time.time() - start_time) * 1000
                     broadcaster.log(text_acc, "chunk")
             elif engine_type == "OLM":
-                # Ollama는 SSE가 아닌 raw NDJSON 스트림을 반환함
                 resp = requests.post(url, json=payload, stream=True, timeout=60)
                 resp.raise_for_status()
                 for raw_line in resp.iter_lines():
@@ -561,7 +580,6 @@ def _run_inference_mode(req: RunBenchmarkRequest):
                             sample_ms = eval_dur_ns / 1e6
                         break
             else:
-                # llama.cpp server: SSE 형식
                 resp = requests.post(url, json=payload, stream=True, timeout=60)
                 resp.raise_for_status()
                 buffer = b""
@@ -646,12 +664,17 @@ def _run_inference_mode(req: RunBenchmarkRequest):
     state.boot_message = "READY"
     time.sleep(1.0)
 
-    broadcaster.log(f"🧠 판정관 가동: {state.stress_config.judge_model}", "bench")
-    
     final_scores = []
+    judge_tasks = [res for res in results if res.get("eval_type") == "llm_judge"]
+    total_judge = len(judge_tasks)
+    broadcaster.log(f"🧠 판정관 가동: {state.stress_config.judge_model} (총 {total_judge}개 채점 대상)", "bench")
+    
+    judge_idx = 0
     try:
         for res in results:
             if res.get("eval_type") == "llm_judge":
+                judge_idx += 1
+                broadcaster.log(f"🧠 [판정 진행률: {judge_idx}/{total_judge}] '{res['task_name']}' 채점 중...", "bench")
                 score_data = JudgeService.call_llm_judge(
                     res["prompt_text"], 
                     res["response_text"], 
@@ -662,6 +685,7 @@ def _run_inference_mode(req: RunBenchmarkRequest):
                 res["judge_reason"] = score_data.get("reason", "No reason provided.")
                 broadcaster.log(f"   └ [판정관 의견]: {res['judge_reason']}", "bench")
                 final_scores.append(score_data.get("score", 0))
+        broadcaster.log("✅ 모든 판정이 성공적으로 완료되었습니다.", "bench")
     except Exception as e:
         broadcaster.log(f"❌ 판정 수행 중 오류: {e}", "bench")
 
@@ -676,7 +700,6 @@ def _run_inference_mode(req: RunBenchmarkRequest):
     cat_scores = {}
     for r in results:
         cat = r.get("category", "General")
-        # 점수 정수로 파싱 시도
         try:
             val = float(r["judge_score"])
             if cat not in cat_scores: cat_scores[cat] = []
@@ -744,9 +767,7 @@ def run_benchmark(req: RunBenchmarkRequest, background_tasks: BackgroundTasks):
 
 # ── Chat Worker & Endpoint ──
 
-def run_chat_worker(req: ChatRequest):
-    state.active_chat_running = True
-    
+def execute_chat_logic(req: ChatRequest) -> tuple[int, dict]:
     engine_type = req.boot_config.engine
     model_name = req.boot_config.model_name
     
@@ -770,8 +791,7 @@ def run_chat_worker(req: ChatRequest):
             state.boot_status = "ERROR"
             state.boot_message = f"스왑 실패: {msg}"
             broadcaster.log(f"❌ 스왑 실패: {msg}", "sys")
-            state.active_chat_running = False
-            return
+            raise RuntimeError(f"Engine swap failed: {msg}")
         state.boot_status = "ONLINE"
         state.boot_message = msg
         state.last_booted_model = model_name
@@ -826,7 +846,6 @@ def run_chat_worker(req: ChatRequest):
                 if ttft == 0: ttft = (time.time() - start_time) * 1000
                 broadcaster.log(text_acc, "chunk")
         elif engine_type == "OLM":
-            # Ollama는 SSE가 아닌 raw NDJSON 스트림을 반환함
             resp = requests.post(url, json=payload, stream=True, timeout=60)
             resp.raise_for_status()
             for raw_line in resp.iter_lines():
@@ -847,7 +866,6 @@ def run_chat_worker(req: ChatRequest):
                         sample_ms = eval_dur_ns / 1e6
                     break
         else:
-            # llama.cpp server: SSE 형식
             resp = requests.post(url, json=payload, stream=True, timeout=60)
             resp.raise_for_status()
             buffer = b""
@@ -878,8 +896,7 @@ def run_chat_worker(req: ChatRequest):
                         break
     except Exception as e:
         broadcaster.log(f"[CHAT_MOD] 오류: {e}", "sys")
-        state.active_chat_running = False
-        return
+        raise e
 
     duration = time.time() - start_time
     if ttft == 0: ttft = duration * 1000
@@ -920,6 +937,7 @@ def run_chat_worker(req: ChatRequest):
             result["Judge_Score"] = str(score_data.get("score", 0))
             result["Judge_Reason"] = score_data.get("reason", "")
             broadcaster.log(f"🏆 채팅 판정 완료: {result['Judge_Score']}/10", "sys")
+            broadcaster.log("✅ 모든 판정이 성공적으로 완료되었습니다.", "sys")
         except Exception as e:
             broadcaster.log(f"❌ 판정관 호출 중 치명적 오류: {e}", "sys")
             result["Judge_Score"] = "0"
@@ -928,6 +946,7 @@ def run_chat_worker(req: ChatRequest):
     # DB 저장
     conn = get_db_connection()
     cursor = conn.cursor()
+    run_id = 0
     try:
         cursor.execute("""
         INSERT INTO benchmark_runs (
@@ -962,7 +981,16 @@ def run_chat_worker(req: ChatRequest):
     finally:
         conn.close()
 
-    state.active_chat_running = False
+    return run_id, result
+
+def run_chat_worker(req: ChatRequest):
+    state.active_chat_running = True
+    try:
+        execute_chat_logic(req)
+    except Exception as e:
+        broadcaster.log(f"[CHAT_MOD] 백그라운드 에러: {e}", "sys")
+    finally:
+        state.active_chat_running = False
 
 @router.post("/api/benchmark/chat")
 def run_chat(req: ChatRequest, background_tasks: BackgroundTasks):
@@ -971,6 +999,103 @@ def run_chat(req: ChatRequest, background_tasks: BackgroundTasks):
         
     background_tasks.add_task(run_chat_worker, req)
     return {"status": "started"}
+
+@router.post("/api/benchmark/run-sync")
+def run_benchmark_sync(req: SyncBenchmarkRequest):
+    if state.active_benchmark_running or state.active_chat_running:
+        raise HTTPException(status_code=400, detail="A benchmark or chat session is already running.")
+    
+    state.active_benchmark_running = True
+    broadcaster.log(f"🚀 [Sync API] 벤치마크 가동 시퀀스 시작 (모드: {req.run_mode})", "bench")
+    
+    try:
+        # 1. Smart SWAP 체크
+        if state.last_booted_model != req.boot_config.model_name:
+            broadcaster.log(f"🔄 [Sync API] 스왑 필요 감지: {state.last_booted_model} -> {req.boot_config.model_name}", "sys")
+            config_dict = {
+                "engine": req.boot_config.engine,
+                "cpu_cores": req.boot_config.cpu_cores,
+                "ram_mb": req.boot_config.ram_mb,
+                "gpu_layers": req.boot_config.gpu_layers,
+                "model_name": req.boot_config.model_name
+            }
+            state.engine.set_logger(lambda msg: broadcaster.log(f"{_ts()} {msg}", "sys"))
+            success, msg = state.engine.boot_matrix(config_dict)
+            if not success:
+                state.boot_status = "ERROR"
+                state.boot_message = f"스왑 실패: {msg}"
+                broadcaster.log(f"❌ 스왑 실패: {msg}", "sys")
+                raise HTTPException(status_code=500, detail=f"Engine swap failed: {msg}")
+            state.boot_status = "ONLINE"
+            state.boot_message = msg
+            state.last_booted_model = req.boot_config.model_name
+
+        # 2. 판정관 지정 동기화
+        state.stress_config.judge_model = req.stress_config.judge_model
+        state.save_config({"default_judge_model": req.stress_config.judge_model})
+
+        # 3. 커스텀 태스크 목록 구성
+        tasks_list = None
+        if req.harness_tasks is not None:
+            tasks_list = [t.dict() for t in req.harness_tasks]
+
+        # 4. 실행 분기
+        if "Stress" in req.run_mode or "Hard" in req.run_mode:
+            run_id, results = _run_stress_mode(req)
+        else:
+            run_id, results = _run_inference_mode(req, tasks_list)
+
+        # 5. 요약 생성
+        scores = []
+        tps_list = []
+        ttft_list = []
+        for r in results:
+            try:
+                scores.append(float(r["judge_score"]))
+            except:
+                pass
+            if r.get("tps"):
+                tps_list.append(r["tps"])
+            if r.get("ttft_ms"):
+                ttft_list.append(r["ttft_ms"])
+
+        summary = {
+            "total_tasks": len(results),
+            "average_score": round(sum(scores)/len(scores), 2) if scores else 0.0,
+            "average_tps": round(sum(tps_list)/len(tps_list), 2) if tps_list else 0.0,
+            "average_ttft_ms": round(sum(ttft_list)/len(ttft_list), 1) if ttft_list else 0.0
+        }
+
+        return {
+            "status": "success",
+            "run_id": run_id,
+            "summary": summary,
+            "results": results
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        state.active_benchmark_running = False
+
+@router.post("/api/benchmark/chat-sync")
+def run_chat_sync(req: ChatRequest):
+    if state.active_benchmark_running or state.active_chat_running:
+        raise HTTPException(status_code=400, detail="A benchmark or chat session is already running.")
+        
+    state.active_chat_running = True
+    try:
+        run_id, result = execute_chat_logic(req)
+        return {
+            "status": "success",
+            "run_id": run_id,
+            "result": result
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        state.active_chat_running = False
+
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # EXPORT EXCEL & WORD

@@ -98,14 +98,25 @@ function handleIncomingLog(packet) {
     const type = packet.type;
     const text = packet.text;
 
+    const searchInput = document.getElementById('log-search-input');
+    const query = searchInput ? searchInput.value.trim() : "";
+    const regex = query ? new RegExp(`(${escapeRegExp(query)})`, 'gi') : null;
+
     if (type === 'chunk') {
         // 실시간 스트리밍: 스트림 뷰포트에 span으로 가로 연결
         const streamViewport = document.getElementById('log-viewport-stream');
         if (streamViewport) {
             const tokenSpan = document.createElement('span');
-            tokenSpan.textContent = text;
+            if (regex && regex.test(text)) {
+                tokenSpan.innerHTML = text.replace(regex, '<span class="search-highlight">$1</span>');
+            } else {
+                tokenSpan.textContent = text;
+            }
+            const scroll = isNearBottom(streamViewport);
             streamViewport.appendChild(tokenSpan);
-            streamViewport.scrollTop = streamViewport.scrollHeight;
+            if (scroll) {
+                streamViewport.scrollTop = streamViewport.scrollHeight;
+            }
         }
         // 채팅 버블에도 반영
         appendChatChunk(text);
@@ -120,12 +131,11 @@ function handleIncomingLog(packet) {
     const viewport = document.getElementById(targetViewportId);
     if (!viewport) return;
 
+    const scroll = isNearBottom(viewport);
+
     // 텍스트를 줄 단위로 분할하여 각각 div.log-line으로 추가
     const lines = text.split('\n');
     lines.forEach((lineText, idx) => {
-        if (idx === 0 && viewport.lastChild && viewport.lastChild.classList && viewport.lastChild.classList.contains('log-line')) {
-            // 마지막 줄에 이어 붙이지 않고 새 줄 생성
-        }
         const line = document.createElement('div');
         line.className = 'log-line';
         if (type === 'bench') {
@@ -136,11 +146,18 @@ function handleIncomingLog(packet) {
                 line.style.color = 'var(--accent)';
             }
         }
-        line.textContent = lineText;
+        
+        if (regex && regex.test(lineText)) {
+            line.innerHTML = lineText.replace(regex, '<span class="search-highlight">$1</span>');
+        } else {
+            line.textContent = lineText;
+        }
         viewport.appendChild(line);
     });
 
-    viewport.scrollTop = viewport.scrollHeight;
+    if (scroll) {
+        viewport.scrollTop = viewport.scrollHeight;
+    }
 
     // 최대 3000줄 유지 (메모리 관리)
     while (viewport.childNodes.length > 3000) {
@@ -988,8 +1005,13 @@ function appendChatBubble(text, sender) {
     const bubble = document.createElement('div');
     bubble.className = `chat-bubble ${sender}`;
     bubble.innerText = text;
+    
+    // User message should always scroll to bottom. AI response should only scroll if user is at bottom.
+    const scroll = (sender === 'user') || isNearBottom(container);
     container.appendChild(bubble);
-    container.scrollTop = container.scrollHeight;
+    if (scroll) {
+        container.scrollTop = container.scrollHeight;
+    }
     return bubble;
 }
 
@@ -1004,7 +1026,9 @@ function appendChatChunk(chunk) {
             activeAiBubble.innerText += chunk;
         }
         const container = document.getElementById('chat-messages');
-        container.scrollTop = container.scrollHeight;
+        if (isNearBottom(container)) {
+            container.scrollTop = container.scrollHeight;
+        }
     }
 }
 
@@ -1414,3 +1438,221 @@ async function submitModelRegistration() {
         alert(`네트워크 통신 오류: ${e}`);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PREMIUM LOG SCREEN ACTIONS & EXTENSION (Conditional Scroll, Search, Drag & Floating)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function isNearBottom(el, threshold = 60) {
+    if (!el) return false;
+    return el.scrollHeight - el.scrollTop - el.clientHeight <= threshold;
+}
+
+let isFloatingLog = false;
+let floatLogX = 150;
+let floatLogY = 150;
+let floatLogW = 750;
+let floatLogH = 500;
+
+function toggleFloatingLog() {
+    const logPanel = document.getElementById('main-log-panel');
+    const dragHeader = document.getElementById('log-drag-header');
+    const toggleBtn = document.getElementById('btn-toggle-float');
+    
+    if (!logPanel || !dragHeader) return;
+    
+    isFloatingLog = !isFloatingLog;
+    
+    if (isFloatingLog) {
+        logPanel.classList.add('floating-log');
+        dragHeader.style.display = 'flex';
+        toggleBtn.innerText = '⛶ dock';
+        
+        // Restore floating size & position
+        logPanel.style.left = floatLogX + 'px';
+        logPanel.style.top = floatLogY + 'px';
+        logPanel.style.width = floatLogW + 'px';
+        logPanel.style.height = floatLogH + 'px';
+        
+        // Enable dragging on header
+        makeElementDraggable(dragHeader, logPanel);
+        
+        // Observe size changes to remember resizing
+        const resizeObserver = new ResizeObserver(entries => {
+            for (let entry of entries) {
+                if (!isFloatingLog) return;
+                floatLogW = entry.contentRect.width + 4; // adjust margin
+                floatLogH = entry.contentRect.height + 40; // adjust headers
+            }
+        });
+        resizeObserver.observe(logPanel);
+    } else {
+        logPanel.classList.remove('floating-log');
+        dragHeader.style.display = 'none';
+        toggleBtn.innerText = '⛶ float';
+        
+        // Reset inline CSS properties
+        logPanel.style.position = '';
+        logPanel.style.zClass = '';
+        logPanel.style.left = '';
+        logPanel.style.top = '';
+        logPanel.style.width = '';
+        logPanel.style.height = '';
+        logPanel.style.zIndex = '';
+    }
+}
+
+function makeElementDraggable(dragEl, targetEl) {
+    let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
+    dragEl.onmousedown = dragMouseDown;
+
+    function dragMouseDown(e) {
+        e = e || window.event;
+        if (e.target.tagName === 'BUTTON' || e.target.closest('button')) return;
+        e.preventDefault();
+        pos3 = e.clientX;
+        pos4 = e.clientY;
+        document.onmouseup = closeDragElement;
+        document.onmousemove = elementDrag;
+    }
+
+    function elementDrag(e) {
+        e = e || window.event;
+        e.preventDefault();
+        pos1 = pos3 - e.clientX;
+        pos2 = pos4 - e.clientY;
+        pos3 = e.clientX;
+        pos4 = e.clientY;
+        
+        const newTop = targetEl.offsetTop - pos2;
+        const newLeft = targetEl.offsetLeft - pos1;
+        
+        // Keep within viewport boundaries approximately
+        targetEl.style.top = Math.max(10, Math.min(window.innerHeight - 100, newTop)) + "px";
+        targetEl.style.left = Math.max(10, Math.min(window.innerWidth - 100, newLeft)) + "px";
+        
+        floatLogX = targetEl.offsetLeft;
+        floatLogY = targetEl.offsetTop;
+    }
+
+    function closeDragElement() {
+        document.onmouseup = null;
+        document.onmousemove = null;
+    }
+}
+
+function getActiveLogTab() {
+    const activeTab = document.querySelector('.log-tabs .log-tab.active');
+    if (activeTab) {
+        return activeTab.id.replace('log-tab-', '');
+    }
+    return 'sys';
+}
+
+function clearActiveLog() {
+    const logId = getActiveLogTab();
+    const viewport = document.getElementById(`log-viewport-${logId}`);
+    if (viewport) {
+        viewport.innerHTML = '';
+        // If search query is active, reset result count to empty
+        const resultsSpan = document.getElementById('log-search-results');
+        if (resultsSpan) resultsSpan.innerText = '';
+    }
+}
+
+function showLogContextMenu(e, viewportId) {
+    e.preventDefault();
+    const menu = document.getElementById('log-ctx-menu');
+    if (!menu) return;
+    
+    menu.style.display = 'block';
+    menu.style.left = e.clientX + 'px';
+    menu.style.top = e.clientY + 'px';
+    menu.dataset.targetViewport = viewportId;
+    
+    // Hide menu on any click outside
+    setTimeout(() => {
+        document.addEventListener('click', hideLogContextMenu);
+    }, 10);
+}
+
+function hideLogContextMenu() {
+    const menu = document.getElementById('log-ctx-menu');
+    if (menu) {
+        menu.style.display = 'none';
+    }
+    document.removeEventListener('click', hideLogContextMenu);
+}
+
+function searchLogs() {
+    const query = document.getElementById('log-search-input').value.trim();
+    const logId = getActiveLogTab();
+    const viewport = document.getElementById(`log-viewport-${logId}`);
+    const resultsSpan = document.getElementById('log-search-results');
+    
+    if (!viewport) return;
+    
+    // Remove previous highlights
+    const highlights = viewport.querySelectorAll('.search-highlight');
+    highlights.forEach(hl => {
+        const parent = hl.parentNode;
+        if (parent) {
+            parent.replaceChild(document.createTextNode(hl.textContent), hl);
+            parent.normalize(); // merge text nodes back
+        }
+    });
+    
+    if (!query) {
+        if (resultsSpan) resultsSpan.innerText = '';
+        return;
+    }
+    
+    let matchCount = 0;
+    const regex = new RegExp(`(${escapeRegExp(query)})`, 'gi');
+    
+    function highlightTextNodes(node) {
+        if (node.nodeType === 3) { // Text Node
+            const text = node.nodeValue;
+            if (text && regex.test(text)) {
+                const matches = text.match(regex);
+                matchCount += matches ? matches.length : 0;
+                
+                const span = document.createElement('span');
+                span.innerHTML = text.replace(regex, '<span class="search-highlight">$1</span>');
+                
+                const parent = node.parentNode;
+                if (parent) {
+                    while (span.firstChild) {
+                        parent.insertBefore(span.firstChild, node);
+                    }
+                    parent.removeChild(node);
+                }
+            }
+        } else if (node.nodeType === 1 && node.childNodes && !node.classList.contains('search-highlight')) {
+            for (let i = node.childNodes.length - 1; i >= 0; i--) {
+                highlightTextNodes(node.childNodes[i]);
+            }
+        }
+    }
+    
+    highlightTextNodes(viewport);
+    if (resultsSpan) {
+        resultsSpan.innerText = matchCount > 0 ? `${matchCount}개` : '없음';
+    }
+}
+
+function escapeRegExp(string) {
+    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Global window search shortcut (Ctrl + F)
+window.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+        const searchInput = document.getElementById('log-search-input');
+        if (searchInput) {
+            e.preventDefault();
+            searchInput.focus();
+            searchInput.select();
+        }
+    }
+});
