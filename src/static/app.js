@@ -269,11 +269,12 @@ async function loadOllamaJudgeModels() {
     }
 }
 
-function syncJudgeModelSelect() {
+async function syncJudgeModelSelect() {
     const select = document.getElementById('select-judge-model');
     const input = document.getElementById('stress-judgemodel');
     if (select.value) {
         input.value = select.value;
+        await saveJudgeModel();
     }
 }
 
