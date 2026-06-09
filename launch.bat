@@ -53,13 +53,17 @@ if "!DOCKER_VER!"=="None" (
 :: [2] Assets & Firewall
 echo.
 echo [2/4] Checking Assets: LLM Edge Models...
-if not exist "models" mkdir models
+set "MODEL_DIR=c:\ameva\models\llm"
+if not exist "%MODEL_DIR%" (
+    echo [Info] Creating models directory: %MODEL_DIR%
+    mkdir "%MODEL_DIR%"
+)
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$check = Test-NetConnection huggingface.co -Port 443 -InformationLevel Quiet; if (-not $check) { Write-Host '[Warning] Firewall detected. Auto-download might fail.' -ForegroundColor Yellow }"
 
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$ModelDir = '.\models'; $LocalSrc = 'C:\ameva\models\llm'; $files = @{ 'qwen2.5-0.5b.gguf'='https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q8_0.gguf'; 'llama3.2-1b.gguf'='https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf' }; foreach($f in $files.Keys) { if(-not (Test-Path \"$ModelDir\$f\")) { if (Test-Path \"$LocalSrc\$f\") { Write-Host \"[Info] Copying $f from $LocalSrc...\" -ForegroundColor Green; Copy-Item \"$LocalSrc\$f\" \"$ModelDir\$f\" } else { Write-Host \"[Info] Downloading $f from Hugging Face...\" -ForegroundColor Green; [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; curl.exe -k -L $files[$f] -o \"$ModelDir\$f\" } } }"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ModelDir = 'c:\ameva\models\llm'; $AltSrc = 'c:\ameva\llm'; $files = @{ 'qwen2.5-1.5b-instruct-q4_k_m.gguf'='https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf'; 'Llama-3.2-1B-Instruct-Q4_K_M.gguf'='https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf' }; foreach($f in $files.Keys) { if(-not (Test-Path \"$ModelDir\$f\")) { if (Test-Path \"$AltSrc\$f\") { Write-Host \"[Info] Copying $f from $AltSrc...\" -ForegroundColor Green; Copy-Item \"$AltSrc\$f\" \"$ModelDir\$f\" } else { Write-Host \"[Info] Downloading $f to $ModelDir from Hugging Face...\" -ForegroundColor Green; [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; curl.exe -k -L $files[$f] -o \"$ModelDir\$f\" } } }"
 
-if exist "models\qwen2.5-0.5b.gguf" set "MODEL_QWEN=Success"
-if exist "models\llama3.2-1b.gguf" set "MODEL_LLAMA=Success"
+if exist "%MODEL_DIR%\qwen2.5-1.5b-instruct-q4_k_m.gguf" (set "MODEL_QWEN=Success") else (set "MODEL_QWEN=Missing")
+if exist "%MODEL_DIR%\Llama-3.2-1B-Instruct-Q4_K_M.gguf" (set "MODEL_LLAMA=Success") else (set "MODEL_LLAMA=Missing")
 
 :: [3] CPU Accel Check
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$feat = (Get-CimInstance Win32_Processor).Caption; if ($feat -match 'AVX2') { $accel='AVX2 Optimized' } else { $accel='Standard' }; Set-Content -Path 'cpu_tmp.txt' -Value $accel"
@@ -88,7 +92,7 @@ echo Docker Path    : %DOCKER_PATH% >> %REPORT_FILE%
 echo CPU Accel      : %CPU_ACCEL% >> %REPORT_FILE%
 echo. >> %REPORT_FILE%
 echo [MODELS] >> %REPORT_FILE%
-echo Qwen-2.5-0.5B  : %MODEL_QWEN% >> %REPORT_FILE%
+echo Qwen-2.5-1.5B  : %MODEL_QWEN% >> %REPORT_FILE%
 echo Llama-3.2-1B   : %MODEL_LLAMA% >> %REPORT_FILE%
 echo. >> %REPORT_FILE%
 echo [LIBRARIES] >> %REPORT_FILE%
