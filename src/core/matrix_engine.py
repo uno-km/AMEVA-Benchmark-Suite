@@ -35,15 +35,26 @@ class MatrixEngine:
             ) from e
 
     def cleanup_old_arena(self):
-        """기존 컨테이너를 정리합니다."""
+        """edgematrix_ 접두사가 붙은 이전 버전 컨테이너를 모두 강제 정리합니다."""
         try:
             client = self._get_docker_client()
-            client.containers.get(self.container_name).remove(force=True)
-            self._log("✓ 이전 컨테이너 제거 완료")
-        except docker.errors.NotFound:
-            self._log("· 기존 컨테이너 없음 (클린 스테이트)")
+            all_containers = client.containers.list(all=True)
+            removed = 0
+            for c in all_containers:
+                # docker SDK Container.name은 슬래시 없이 반환됨
+                cname = (c.name or "").lstrip('/')
+                if cname.startswith('edgematrix_'):
+                    try:
+                        c.remove(force=True)
+                        self._log(f"✓ 이전 컨테이너 제거: {cname}")
+                        removed += 1
+                    except Exception as ex:
+                        self._log(f"[WARN] 컨테이너 제거 실패 {cname}: {ex}")
+            if removed == 0:
+                self._log("· 기존 컨테이너 없음 (클린 스테이트)")
         except Exception as e:
             self._log(f"[WARN] 컨테이너 정리 중 오류: {e}")
+
 
     def boot_matrix(self, config: Dict) -> Tuple[bool, str]:
         """매트릭스(Docker 컨테이너)를 부팅합니다. 각 단계를 상세 로깅합니다."""

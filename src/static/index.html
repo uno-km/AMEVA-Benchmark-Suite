@@ -246,8 +246,8 @@
                                 <button id="log-tab-stream" class="log-tab" onclick="switchLogTab('stream')">실시간 추론 스트리밍</button>
                             </div>
                             <div id="log-viewport-sys" class="log-viewport log-sys"></div>
-                            <div id="log-viewport-bench" class="log-viewport log-bench" style="display: none;"></div>
-                            <div id="log-viewport-stream" class="log-viewport log-sys" style="display: none; font-size: 12px; line-height: 1.5; color: #a5f3fc; background-color: #020617;"></div>
+                            <div id="log-viewport-bench" class="log-viewport" style="display: none;"></div>
+                            <div id="log-viewport-stream" class="log-viewport" style="display: none;"></div>
                         </div>
                     </div>
 
@@ -264,8 +264,8 @@
                                 <div class="chat-bubble system">대화형 추론 벤치마크 채널이 개설되었습니다.</div>
                             </div>
                             <div class="chat-input-row">
-                                <input type="text" id="chat-input" placeholder="질문을 입력하세요..." onkeydown="if(event.key==='Enter') sendChatMessage()">
-                                <button class="btn btn-primary" onclick="sendChatMessage()">전송</button>
+                                <input type="text" id="chat-input" placeholder="커널 연결 대기 중..." disabled onkeydown="if(event.key==='Enter') sendChatMessage()">
+                                <button class="btn btn-primary" id="chat-send-btn" disabled onclick="sendChatMessage()">전송</button>
                             </div>
                         </div>
                     </div>

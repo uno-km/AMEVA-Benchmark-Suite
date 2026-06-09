@@ -341,17 +341,30 @@ canvas {
     font-size: 11px;
     overflow-y: auto;
     white-space: pre-wrap;
-    word-break: break-all;
+    word-break: break-word;
+    overflow-wrap: break-word;
+    line-height: 1.6;
+}
+
+/* 스트림 뷰포트: span 기반이므로 인라인 플로우로 처리 */
+#log-viewport-stream {
+    word-break: break-word;
+    overflow-wrap: break-word;
+    font-size: 12px;
+    color: #a5f3fc;
+    background-color: #020617;
+    line-height: 1.5;
 }
 
 .log-line {
-    margin-bottom: 4px;
-    line-height: 1.4;
+    margin-bottom: 2px;
+    line-height: 1.5;
 }
 
 .log-sys { color: #a1a1aa; }
 .log-bench { color: #34d399; }
 .log-err { color: #f87171; }
+
 
 /* Interactive Chat */
 .chat-container {

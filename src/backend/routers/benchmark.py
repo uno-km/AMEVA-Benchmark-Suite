@@ -333,7 +333,7 @@ def delete_report(run_id: int):
 
 def run_benchmark_worker(req: RunBenchmarkRequest):
     state.active_benchmark_running = True
-    broadcaster.log(f"🚀 벤치마크 가동 시퀀스 시작 (모드: {req.run_mode})", "sys")
+    broadcaster.log(f"🚀 벤치마크 가동 시퀀스 시작 (모드: {req.run_mode})", "bench")
     
     try:
         # 1. Smart SWAP 체크
@@ -369,7 +369,7 @@ def run_benchmark_worker(req: RunBenchmarkRequest):
         state.active_benchmark_running = False
 
 def _run_stress_mode(req: RunBenchmarkRequest):
-    broadcaster.log("LLAMA-BENCH 스트레스 테스트 시작", "sys")
+    broadcaster.log("LLAMA-BENCH 스트레스 테스트 시작", "bench")
     results = []
 
     pw_tracker = PowerTracker()
@@ -390,7 +390,7 @@ def _run_stress_mode(req: RunBenchmarkRequest):
     avg_watts = pw_tracker.get_average_watts()
     
     if not bench_data:
-        broadcaster.log("[에러] 스트레스 테스트에서 데이터를 반환하지 못했습니다.", "sys")
+        broadcaster.log("[에러] 스트레스 테스트에서 데이터를 반환하지 못했습니다.", "bench")
         return
 
     # 데이터베이스 삽입
@@ -423,10 +423,10 @@ def _run_stress_mode(req: RunBenchmarkRequest):
                 0.0, round(item.get('t/s', 0), 2), 0.0, "STRESS", "STRESS", 0.0, "N/A", "N/A"
             ))
         conn.commit()
-        broadcaster.log(f"📊 {len(bench_data)}건 스트레스 결과가 SQLite DB에 저장되었습니다.", "sys")
+        broadcaster.log(f"📊 {len(bench_data)}건 스트레스 결과가 SQLite DB에 저장되었습니다.", "bench")
     except Exception as e:
         conn.rollback()
-        broadcaster.log(f"❌ DB 저장 에러: {e}", "sys")
+        broadcaster.log(f"❌ DB 저장 에러: {e}", "bench")
     finally:
         conn.close()
     
@@ -435,7 +435,7 @@ def _run_stress_mode(req: RunBenchmarkRequest):
     state.last_booted_model = ""
     state.boot_status = "OFFLINE"
     state.boot_message = "READY"
-    broadcaster.log("✓ 벤치마크 완료 및 엔진 종료.", "sys")
+    broadcaster.log("✓ 벤치마크 완료 및 엔진 종료.", "bench")
 
 def _run_inference_mode(req: RunBenchmarkRequest):
     # 하네스 데이터 로드
@@ -446,10 +446,10 @@ def _run_inference_mode(req: RunBenchmarkRequest):
     conn.close()
 
     if not dataset:
-        broadcaster.log("[에러] 하네스 태스크가 존재하지 않습니다. 먼저 하네스 매니저에서 추가해 주세요.", "sys")
+        broadcaster.log("[에러] 하네스 태스크가 존재하지 않습니다. 먼저 하네스 매니저에서 추가해 주세요.", "bench")
         return
 
-    broadcaster.log(f"추론 모드 시작 – 하네스 태스크 {len(dataset)}개", "sys")
+    broadcaster.log(f"추론 모드 시작 – 하네스 태스크 {len(dataset)}개", "bench")
     results = []
 
     engine_type = req.boot_config.engine
@@ -466,7 +466,7 @@ def _run_inference_mode(req: RunBenchmarkRequest):
     has_nv = specs.has_nvidia
 
     for idx, task in enumerate(dataset):
-        broadcaster.log(f"─── Task [{idx+1}/{len(dataset)}]: {task.get('task_id','?')} ───", "sys")
+        broadcaster.log(f"─── Task [{idx+1}/{len(dataset)}]: {task.get('task_id','?')} ───", "bench")
         # task_id가 카테고리를 암시
         cat_name = "General"
         if "-" in task.get("task_id", ""):
@@ -531,49 +531,59 @@ def _run_inference_mode(req: RunBenchmarkRequest):
                     tok_count = len(text_acc.split())
                     if ttft == 0: ttft = (time.time() - start_time) * 1000
                     broadcaster.log(text_acc, "chunk")
-            else:
-                resp = requests.post(url, json=payload, stream=True, timeout=30)
+            elif engine_type == "OLM":
+                # Ollama는 SSE가 아닌 raw NDJSON 스트림을 반환함
+                resp = requests.post(url, json=payload, stream=True, timeout=60)
                 resp.raise_for_status()
-                
+                for raw_line in resp.iter_lines():
+                    if not raw_line: continue
+                    try:
+                        data = json.loads(raw_line.decode('utf-8'))
+                    except (json.JSONDecodeError, UnicodeDecodeError): continue
+                    if ttft == 0: ttft = (time.time() - start_time) * 1000
+                    token = data.get('response', '')
+                    if token:
+                        text_acc += token
+                        tok_count += 1
+                        broadcaster.log(token, "chunk")
+                    if data.get('done'):
+                        eval_count = data.get('eval_count', 0)
+                        eval_dur_ns = data.get('eval_duration', 0)
+                        if eval_count > 0 and eval_dur_ns > 0:
+                            sample_ms = eval_dur_ns / 1e6
+                        break
+            else:
+                # llama.cpp server: SSE 형식
+                resp = requests.post(url, json=payload, stream=True, timeout=60)
+                resp.raise_for_status()
                 buffer = b""
-                for chunk in resp.iter_content(chunk_size=1024):
+                for chunk in resp.iter_content(chunk_size=512):
                     if not chunk: continue
                     buffer += chunk
-                    while b"\n\n" in buffer:
-                        event_block, buffer = buffer.split(b"\n\n", 1)
-                        lines = event_block.decode('utf-8', errors='replace').split('\n')
-                        for line in lines:
-                            line = line.strip()
-                            if not line.startswith("data:"): continue
-                            payload_str = line[5:].strip()
-                            if payload_str == "[DONE]": break
-                            try:
-                                data = json.loads(payload_str)
-                            except json.JSONDecodeError: continue
-                            if ttft == 0: ttft = (time.time() - start_time) * 1000
-                            
-                            if engine_type == "OLM":
-                                token = data.get('response', '')
-                            else:
-                                token = data.get('content', '')
-                            
-                            if token:
-                                text_acc += token
-                                tok_count += 1
-                                broadcaster.log(token, "chunk")
-                                
-                            if engine_type == "OLM":
-                                if data.get('done'): break
-                            else:
-                                if data.get('stop'):
-                                    t_info = data.get('timings', {})
-                                    prompt_n = t_info.get('prompt_n', 1)
-                                    p_ms = t_info.get('prompt_ms', 0)
-                                    prompt_ms_per_t = round(p_ms / prompt_n, 2) if prompt_n > 0 else 0
-                                    sample_ms = t_info.get('predicted_ms', 0)
-                                    break
+                    while b"\n" in buffer:
+                        line_bytes, buffer = buffer.split(b"\n", 1)
+                        line = line_bytes.decode('utf-8', errors='replace').strip()
+                        if not line.startswith("data:"): continue
+                        payload_str = line[5:].strip()
+                        if payload_str == "[DONE]": break
+                        try:
+                            data = json.loads(payload_str)
+                        except json.JSONDecodeError: continue
+                        if ttft == 0: ttft = (time.time() - start_time) * 1000
+                        token = data.get('content', '')
+                        if token:
+                            text_acc += token
+                            tok_count += 1
+                            broadcaster.log(token, "chunk")
+                        if data.get('stop'):
+                            t_info = data.get('timings', {})
+                            prompt_n = t_info.get('prompt_n', 1)
+                            p_ms = t_info.get('prompt_ms', 0)
+                            prompt_ms_per_t = round(p_ms / prompt_n, 2) if prompt_n > 0 else 0
+                            sample_ms = t_info.get('predicted_ms', 0)
+                            break
         except Exception as e:
-            broadcaster.log(f"[에러] 추론 엔진 통신 실패: {e}", "sys")
+            broadcaster.log(f"[에러] 추론 엔진 통신 실패: {e}", "bench")
 
         duration = time.time() - start_time
         if ttft == 0: ttft = duration * 1000
@@ -595,8 +605,8 @@ def _run_inference_mode(req: RunBenchmarkRequest):
         avg_watts = pw_tracker.get_average_watts()
         tps_val = round(tok_count / duration, 2) if duration > 0 else 0
 
-        broadcaster.log(f"Task 완료 | TPS: {tps_val} | TTFT: {ttft:.1f}ms | {avg_watts:.1f}W", "sys")
-        broadcaster.log(f"✓ [{cat_name}] {task.get('task_id','?')}  |  Judge: {score}  |  {duration:.2f}s  |  {tps_val} t/s", "sys")
+        broadcaster.log(f"Task 완료 | TPS: {tps_val} | TTFT: {ttft:.1f}ms | {avg_watts:.1f}W", "bench")
+        broadcaster.log(f"✓ [{cat_name}] {task.get('task_id','?')}  |  Judge: {score}  |  {duration:.2f}s  |  {tps_val} t/s", "bench")
 
         results.append({
             "task_name":         task.get("task_id"),
@@ -618,7 +628,7 @@ def _run_inference_mode(req: RunBenchmarkRequest):
             "eval_type":          eval_type
         })
 
-    broadcaster.log("✓ 벤치마크 추론 시퀀스 완료.", "sys")
+    broadcaster.log("✓ 벤치마크 추론 시퀀스 완료.", "bench")
     
     # 판정 전 메인 엔진 리소스 명시적 해제
     broadcaster.log("⚙️  판정 전 리소스 최적화: 메인 엔진 언로드 시퀀스...", "sys")
@@ -628,7 +638,7 @@ def _run_inference_mode(req: RunBenchmarkRequest):
     state.boot_message = "READY"
     time.sleep(1.0)
 
-    broadcaster.log(f"🧠 판정관 가동: {req.stress_config.judge_model}", "sys")
+    broadcaster.log(f"🧠 판정관 가동: {req.stress_config.judge_model}", "bench")
     
     final_scores = []
     try:
@@ -642,18 +652,18 @@ def _run_inference_mode(req: RunBenchmarkRequest):
                 )
                 res["judge_score"]  = str(score_data.get("score", 0))
                 res["judge_reason"] = score_data.get("reason", "No reason provided.")
-                broadcaster.log(f"   └ [판정관 의견]: {res['judge_reason']}", "sys")
+                broadcaster.log(f"   └ [판정관 의견]: {res['judge_reason']}", "bench")
                 final_scores.append(score_data.get("score", 0))
     except Exception as e:
-        broadcaster.log(f"❌ 판정 수행 중 오류: {e}", "sys")
+        broadcaster.log(f"❌ 판정 수행 중 오류: {e}", "bench")
 
     avg_score = sum(final_scores)/len(final_scores) if final_scores else 0
     
-    broadcaster.log("\n" + "="*50, "sys")
-    broadcaster.log("🏆 [AMEVA] 최종 벤치마크 리포트 (EXAONE 3.5 기준)", "sys")
-    broadcaster.log("="*50, "sys")
-    broadcaster.log(f"{'CATEGORY':<15} | {'SCORE':<10} | {'STATUS'}", "sys")
-    broadcaster.log("-" * 50, "sys")
+    broadcaster.log("\n" + "="*50, "bench")
+    broadcaster.log("🏆 [AMEVA] 최종 벤치마크 리포트 (EXAONE 3.5 기준)", "bench")
+    broadcaster.log("="*50, "bench")
+    broadcaster.log(f"{'CATEGORY':<15} | {'SCORE':<10} | {'STATUS'}", "bench")
+    broadcaster.log("-" * 50, "bench")
     
     cat_scores = {}
     for r in results:
@@ -672,11 +682,11 @@ def _run_inference_mode(req: RunBenchmarkRequest):
             status_text = f"{c_avg:.2f}"
         else:
             status_text = "N/A"
-        broadcaster.log(f"{cat:<15} | {status_text:<10} | OK", "sys")
+        broadcaster.log(f"{cat:<15} | {status_text:<10} | OK", "bench")
         
-    broadcaster.log("-" * 50, "sys")
-    broadcaster.log(f"⭐ TOTAL AVERAGE: {avg_score:.2f} / 10.0", "sys")
-    broadcaster.log("="*50, "sys")
+    broadcaster.log("-" * 50, "bench")
+    broadcaster.log(f"⭐ TOTAL AVERAGE: {avg_score:.2f} / 10.0", "bench")
+    broadcaster.log("="*50, "bench")
 
     # DB 저장
     conn = get_db_connection()
@@ -709,10 +719,10 @@ def _run_inference_mode(req: RunBenchmarkRequest):
                 res["sampling_time_ms"], res["judge_score"], res["judge_reason"]
             ))
         conn.commit()
-        broadcaster.log("📊 결과 저장 완료 및 시퀀스 리셋.", "sys")
+        broadcaster.log("📊 결과 저장 완료 및 시퀀스 리셋.", "bench")
     except Exception as e:
         conn.rollback()
-        broadcaster.log(f"❌ DB 저장 에러: {e}", "sys")
+        broadcaster.log(f"❌ DB 저장 에러: {e}", "bench")
     finally:
         conn.close()
 
@@ -794,7 +804,6 @@ def run_chat_worker(req: ChatRequest):
     tok_count        = 0
     start_time       = time.time()
 
-    buffer = b""
     try:
         if engine_type == "BIT":
             if state.engine.container:
@@ -808,49 +817,57 @@ def run_chat_worker(req: ChatRequest):
                 tok_count = len(text_acc.split())
                 if ttft == 0: ttft = (time.time() - start_time) * 1000
                 broadcaster.log(text_acc, "chunk")
-        else:
-            resp = requests.post(url, json=payload, stream=True, timeout=30)
+        elif engine_type == "OLM":
+            # Ollama는 SSE가 아닌 raw NDJSON 스트림을 반환함
+            resp = requests.post(url, json=payload, stream=True, timeout=60)
             resp.raise_for_status()
-
-            for chunk in resp.iter_content(chunk_size=1024):
+            for raw_line in resp.iter_lines():
+                if not raw_line: continue
+                try:
+                    data = json.loads(raw_line.decode('utf-8'))
+                except (json.JSONDecodeError, UnicodeDecodeError): continue
+                if ttft == 0: ttft = (time.time() - start_time) * 1000
+                token = data.get('response', '')
+                if token:
+                    text_acc += token
+                    tok_count += 1
+                    broadcaster.log(token, "chunk")
+                if data.get('done'):
+                    eval_count = data.get('eval_count', 0)
+                    eval_dur_ns = data.get('eval_duration', 0)
+                    if eval_count > 0 and eval_dur_ns > 0:
+                        sample_ms = eval_dur_ns / 1e6
+                    break
+        else:
+            # llama.cpp server: SSE 형식
+            resp = requests.post(url, json=payload, stream=True, timeout=60)
+            resp.raise_for_status()
+            buffer = b""
+            for chunk in resp.iter_content(chunk_size=512):
                 if not chunk: continue
                 buffer += chunk
-                while b"\n\n" in buffer:
-                    event_block, buffer = buffer.split(b"\n\n", 1)
-                    lines = event_block.decode('utf-8', errors='replace').split('\n')
-                    for line in lines:
-                        line = line.strip()
-                        if not line.startswith("data:"): continue
-                        
-                        payload_str = line[5:].strip()
-                        if payload_str == "[DONE]": break
-                        try:
-                            data = json.loads(payload_str)
-                        except json.JSONDecodeError: continue
-                        
-                        if ttft == 0:
-                            ttft = (time.time() - start_time) * 1000
-                        
-                        if engine_type == "OLM":
-                            token = data.get("response", "")
-                        else:
-                            token = data.get("content", "")
-
-                        if token:
-                            text_acc += token
-                            tok_count += 1
-                            broadcaster.log(token, "chunk")
-                        
-                        if engine_type == "OLM":
-                            if data.get("done"): break
-                        else:
-                            if data.get("stop"):
-                                t = data.get("timings", {})
-                                pn = t.get("prompt_n", 0)
-                                pm = t.get("prompt_ms", 0)
-                                prompt_ms_per_t = round(pm / pn, 2) if pn > 0 else 0
-                                sample_ms = t.get("predicted_ms", 0)
-                                break
+                while b"\n" in buffer:
+                    line_bytes, buffer = buffer.split(b"\n", 1)
+                    line = line_bytes.decode('utf-8', errors='replace').strip()
+                    if not line.startswith("data:"): continue
+                    payload_str = line[5:].strip()
+                    if payload_str == "[DONE]": break
+                    try:
+                        data = json.loads(payload_str)
+                    except json.JSONDecodeError: continue
+                    if ttft == 0: ttft = (time.time() - start_time) * 1000
+                    token = data.get('content', '')
+                    if token:
+                        text_acc += token
+                        tok_count += 1
+                        broadcaster.log(token, "chunk")
+                    if data.get('stop'):
+                        t = data.get('timings', {})
+                        pn = t.get('prompt_n', 0)
+                        pm = t.get('prompt_ms', 0)
+                        prompt_ms_per_t = round(pm / pn, 2) if pn > 0 else 0
+                        sample_ms = t.get('predicted_ms', 0)
+                        break
     except Exception as e:
         broadcaster.log(f"[CHAT_MOD] 오류: {e}", "sys")
         state.active_chat_running = False

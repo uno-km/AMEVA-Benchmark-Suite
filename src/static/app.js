@@ -28,26 +28,43 @@ window.addEventListener('DOMContentLoaded', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function initWebSockets() {
+    initTelemetryWs();
+    initLogsWs();
+}
+
+function initTelemetryWs() {
     const host = window.location.host;
-    
-    // Telemetry WebSocket
+    if (telemetryWs && telemetryWs.readyState === WebSocket.OPEN) return;
     telemetryWs = new WebSocket(`ws://${host}/ws/telemetry`);
     telemetryWs.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        updateTelemetry(data);
+        try {
+            const data = JSON.parse(event.data);
+            updateTelemetry(data);
+        } catch(e) {}
     };
     telemetryWs.onclose = () => {
-        setTimeout(initWebSockets, 3000);
+        setTimeout(initTelemetryWs, 3000);
     };
+    telemetryWs.onerror = () => {
+        telemetryWs.close();
+    };
+}
 
-    // Logs & Chunks WebSocket
+function initLogsWs() {
+    const host = window.location.host;
+    if (logsWs && logsWs.readyState === WebSocket.OPEN) return;
     logsWs = new WebSocket(`ws://${host}/ws/logs`);
     logsWs.onmessage = (event) => {
-        const packet = JSON.parse(event.data);
-        handleIncomingLog(packet);
+        try {
+            const packet = JSON.parse(event.data);
+            handleIncomingLog(packet);
+        } catch(e) {}
     };
     logsWs.onclose = () => {
-        setTimeout(initWebSockets, 3000);
+        setTimeout(initLogsWs, 3000);
+    };
+    logsWs.onerror = () => {
+        logsWs.close();
     };
 }
 
@@ -79,25 +96,45 @@ function handleIncomingLog(packet) {
     const type = packet.type;
     const text = packet.text;
 
+    if (type === 'chunk') {
+        // 실시간 스트리밍: 스트림 뷰포트에 span으로 가로 연결
+        const streamViewport = document.getElementById('log-viewport-stream');
+        if (streamViewport) {
+            const tokenSpan = document.createElement('span');
+            tokenSpan.textContent = text;
+            streamViewport.appendChild(tokenSpan);
+            streamViewport.scrollTop = streamViewport.scrollHeight;
+        }
+        // 채팅 버블에도 반영
+        appendChatChunk(text);
+        return;
+    }
+
     let targetViewportId = 'log-viewport-sys';
     if (type === 'bench') {
         targetViewportId = 'log-viewport-bench';
-    } else if (type === 'chunk') {
-        targetViewportId = 'log-viewport-stream';
-        appendChatChunk(text);
     }
 
     const viewport = document.getElementById(targetViewportId);
     if (!viewport) return;
 
-    const line = document.createElement('div');
-    line.className = 'log-line';
-    line.innerText = text;
-    viewport.appendChild(line);
+    // 텍스트를 줄 단위로 분할하여 각각 div.log-line으로 추가
+    const lines = text.split('\n');
+    lines.forEach((lineText, idx) => {
+        if (idx === 0 && viewport.lastChild && viewport.lastChild.classList && viewport.lastChild.classList.contains('log-line')) {
+            // 마지막 줄에 이어 붙이지 않고 새 줄 생성
+        }
+        const line = document.createElement('div');
+        line.className = 'log-line';
+        if (type === 'bench') line.style.color = 'var(--accent)';
+        line.textContent = lineText;
+        viewport.appendChild(line);
+    });
 
     viewport.scrollTop = viewport.scrollHeight;
 
-    if (viewport.childNodes.length > 1000) {
+    // 최대 3000줄 유지 (메모리 관리)
+    while (viewport.childNodes.length > 3000) {
         viewport.removeChild(viewport.firstChild);
     }
 }
@@ -271,6 +308,9 @@ async function checkSessionStatus() {
         
         statusDot.className = 'status-indicator';
         
+        const chatInput = document.getElementById('chat-input');
+        const chatSendBtn = document.getElementById('chat-send-btn');
+
         if (data.boot_status === 'ONLINE') {
             statusDot.classList.add('online');
             statusText.innerText = `온라인 - 커널 동작중 [${data.boot_message}]`;
@@ -281,30 +321,65 @@ async function checkSessionStatus() {
             currentActiveModel = data.last_booted_model;
             document.getElementById('active-model-display').innerText = currentActiveModel || "모델 미선택";
             document.getElementById('active-model-display').style.color = "var(--accent)";
+
+            if (chatInput) {
+                chatInput.disabled = false;
+                chatInput.placeholder = "질문을 입력하세요...";
+            }
+            if (chatSendBtn) {
+                chatSendBtn.disabled = false;
+            }
         } else if (data.boot_status === 'BOOTING') {
             statusDot.classList.add('booting');
             statusText.innerText = `가동중 - 커널 격리 공간 준비 중...`;
             
             document.getElementById('btn-boot').disabled = true;
             document.getElementById('btn-shutdown').disabled = true;
+
+            if (chatInput) {
+                chatInput.disabled = true;
+                chatInput.placeholder = "⏳ 커널 가동 및 웜업 중... 잠시만 기다려주세요.";
+            }
+            if (chatSendBtn) {
+                chatSendBtn.disabled = true;
+            }
         } else if (data.boot_status === 'ERROR') {
             statusDot.classList.add('offline');
             statusText.innerText = `장애발생 - ${data.boot_message}`;
             
             document.getElementById('btn-boot').disabled = false;
             document.getElementById('btn-shutdown').disabled = true;
+
+            if (chatInput) {
+                chatInput.disabled = true;
+                chatInput.placeholder = "커널이 장애 상태입니다. 재부팅해 주세요.";
+            }
+            if (chatSendBtn) {
+                chatSendBtn.disabled = true;
+            }
         } else {
             statusText.innerText = `오프라인 - 커널 동작 정지 상태`;
             document.getElementById('btn-boot').disabled = false;
             document.getElementById('btn-shutdown').disabled = true;
             document.getElementById('active-model-display').innerText = "미선택 (OFFLINE)";
             document.getElementById('active-model-display').style.color = "var(--text-muted)";
+
+            if (chatInput) {
+                chatInput.disabled = true;
+                chatInput.placeholder = "커널이 가동 상태(ONLINE)일 때만 대화가 가능합니다.";
+            }
+            if (chatSendBtn) {
+                chatSendBtn.disabled = true;
+            }
         }
 
         const runBtn = document.getElementById('btn-run');
         if (data.benchmark_running || data.chat_running) {
             runBtn.disabled = true;
             runBtn.innerText = "⏳ RUNNING TASK...";
+        } else if (data.boot_status === 'BOOTING') {
+            runBtn.disabled = true;
+            runBtn.innerText = "⏳ 커널 가동 중...";
         } else {
             runBtn.disabled = false;
             runBtn.innerText = "⚡ RUN BENCHMARK";
@@ -340,7 +415,7 @@ async function bootKernel() {
         });
         if (resp.ok) {
             switchLogTab('sys');
-            document.getElementById('log-viewport-sys').innerText = ""; 
+            document.getElementById('log-viewport-sys').innerHTML = ''; 
         } else {
             const err = await resp.json();
             alert(`커널 가동 요청 실패: ${err.detail}`);
@@ -725,9 +800,9 @@ async function runBenchmark() {
         return;
     }
 
-    document.getElementById('log-viewport-sys').innerText = "";
-    document.getElementById('log-viewport-bench').innerText = "";
-    document.getElementById('log-viewport-stream').innerText = "";
+    document.getElementById('log-viewport-sys').innerHTML = '';
+    document.getElementById('log-viewport-bench').innerHTML = '';
+    document.getElementById('log-viewport-stream').innerHTML = '';
     
     switchLogTab('bench');
 
@@ -790,7 +865,7 @@ async function sendChatMessage() {
     appendChatBubble(prompt, 'user');
     activeAiBubble = appendChatBubble("⏳ AI 추론 중…", 'ai');
     
-    document.getElementById('log-viewport-stream').innerText = ""; 
+    document.getElementById('log-viewport-stream').innerHTML = ''; 
     switchLogTab('stream');
 
     const engine = document.getElementById('config-engine').value;
