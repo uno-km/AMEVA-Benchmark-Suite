@@ -504,8 +504,7 @@ def _run_inference_mode(req: RunBenchmarkRequest, tasks_list: list[dict] = None)
         broadcaster.log(f"\n[INFO] AI가 '{task_id}' 문제를 분석 중입니다... (TTFT 측정 중)\n", "chunk")
 
         pw_tracker = PowerTracker(has_nvidia=has_nv)
-        if "Efficiency" in req.run_mode:
-            pw_tracker.start()
+        pw_tracker.start()
 
         start_time = time.time()
         text_acc = ""
@@ -616,8 +615,7 @@ def _run_inference_mode(req: RunBenchmarkRequest, tasks_list: list[dict] = None)
         
         broadcaster.log(f"\n[DONE] 생성 완료. (TTFT: {ttft:.1f}ms / TPS: {tok_count/duration if duration>0 else 0:.2f})\n", "chunk")
         
-        if "Efficiency" in req.run_mode:
-            pw_tracker.stop()
+        pw_tracker.stop()
 
         eval_type = task.get('eval_type', 'llm_judge')
         score = "N/A"
@@ -665,26 +663,38 @@ def _run_inference_mode(req: RunBenchmarkRequest, tasks_list: list[dict] = None)
     time.sleep(1.0)
 
     final_scores = []
-    judge_tasks = [res for res in results if res.get("eval_type") == "llm_judge"]
-    total_judge = len(judge_tasks)
+    total_judge = len(results)
     broadcaster.log(f"🧠 판정관 가동: {state.stress_config.judge_model} (총 {total_judge}개 채점 대상)", "bench")
     
     judge_idx = 0
     try:
         for res in results:
-            if res.get("eval_type") == "llm_judge":
-                judge_idx += 1
-                broadcaster.log(f"🧠 [판정 진행률: {judge_idx}/{total_judge}] '{res['task_name']}' 채점 중...", "bench")
-                score_data = JudgeService.call_llm_judge(
-                    res["prompt_text"], 
-                    res["response_text"], 
-                    state.stress_config,
-                    chunk_callback=lambda tok: broadcaster.log(tok, "chunk")
-                )
-                res["judge_score"]  = str(score_data.get("score", 0))
-                res["judge_reason"] = score_data.get("reason", "No reason provided.")
-                broadcaster.log(f"   └ [판정관 의견]: {res['judge_reason']}", "bench")
-                final_scores.append(score_data.get("score", 0))
+            judge_idx += 1
+            broadcaster.log(f"🧠 [판정 진행률: {judge_idx}/{total_judge}] '{res['task_name']}' 채점 중...", "bench")
+            score_data = JudgeService.call_llm_judge(
+                res["prompt_text"], 
+                res["response_text"], 
+                state.stress_config,
+                chunk_callback=lambda tok: broadcaster.log(tok, "chunk")
+            )
+            
+            llm_score = str(score_data.get("score", 0))
+            llm_reason = score_data.get("reason", "No reason provided.")
+            
+            if res.get("eval_type") == "regex":
+                res["judge_reason"] = f"[Regex Result: {res['judge_score']}] " + llm_reason
+                res["judge_score"] = llm_score
+            else:
+                res["judge_score"]  = llm_score
+                res["judge_reason"] = llm_reason
+                
+            broadcaster.log(f"   └ [판정관 의견]: {res['judge_reason']}", "bench")
+            
+            try:
+                final_scores.append(int(llm_score))
+            except:
+                final_scores.append(0)
+                
         broadcaster.log("✅ 모든 판정이 성공적으로 완료되었습니다.", "bench")
     except Exception as e:
         broadcaster.log(f"❌ 판정 수행 중 오류: {e}", "bench")
@@ -1308,6 +1318,8 @@ class DocExportQueueManager:
                         chunk = json.loads(line)
                         content = chunk.get("message", {}).get("content", "")
                         full_summary += content
+                        with self.lock:
+                            task.message = f"AI 요약 작성 중... ({len(full_summary)}자 생성)"
                 summary_text = full_summary.strip()
                 broadcaster.log("📝 보고서 요약 생성 완료.", "sys")
             except Exception as e:

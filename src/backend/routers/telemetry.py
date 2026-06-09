@@ -51,6 +51,35 @@ def get_gpu_telemetry():
 
     return stats
 
+import platform
+import os
+
+def get_cpu_temp():
+    temp_c = 0.0
+    # 1. psutil 시도
+    try:
+        if hasattr(psutil, "sensors_temperatures"):
+            temps = psutil.sensors_temperatures()
+            if temps and 'coretemp' in temps:
+                temp_c = temps['coretemp'][0].current
+            elif temps:
+                temp_c = list(temps.values())[0][0].current
+    except Exception:
+        pass
+        
+    # 2. Linux 파일 시스템 직접 접근 (제안해주신 방식)
+    if temp_c == 0.0 and platform.system() == "Linux":
+        thermal_path = "/sys/class/thermal/thermal_zone0/temp"
+        if os.path.exists(thermal_path):
+            try:
+                with open(thermal_path, "r") as f:
+                    temp_raw = f.read().strip()
+                    temp_c = float(temp_raw) / 1000.0
+            except Exception:
+                pass
+                
+    return temp_c
+
 async def get_system_stats():
     # CPU & RAM 수집
     cpu_percent = psutil.cpu_percent(interval=None)
@@ -58,11 +87,14 @@ async def get_system_stats():
     ram_used_gb = round((mem.total - mem.available) / (1024**3), 2)
     ram_total_gb = round(mem.total / (1024**3), 2)
     
-    # GPU 텔레메트리 수집
+    # 온도 및 GPU 수집
+    cpu_temp_c = get_cpu_temp()
     gpu_stats = get_gpu_telemetry()
     
+    # 최종 리턴
     return {
         "cpu": cpu_percent,
+        "cpu_temp_c": cpu_temp_c,
         "ram": ram_used_gb,
         "ram_total": ram_total_gb,
         **gpu_stats

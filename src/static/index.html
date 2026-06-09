@@ -238,10 +238,17 @@
                                 </div>
                             </div>
                             <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); margin-bottom: 6px; font-weight: 600;">
-                                <span>실시간 CPU/GPU 모니터 (최근 50s 이력)</span>
+                                <div style="display: flex; align-items: center; gap: 12px;">
+                                    <span>실시간 CPU/GPU 모니터</span>
+                                    <span style="display: flex; align-items: center; gap: 4px;"><div style="width: 10px; height: 10px; background: rgba(59, 130, 246, 0.6);"></div>CPU</span>
+                                    <span style="display: flex; align-items: center; gap: 4px;"><div style="width: 10px; height: 10px; background: rgba(16, 185, 129, 0.6);"></div>GPU</span>
+                                </div>
                                 <span id="val-power-temp">전력: 0.0W  |  온도: 0°C</span>
                             </div>
-                            <canvas id="telemetry-canvas" height="80"></canvas>
+                            <div id="canvas-container" style="width: 100%; overflow-x: auto; position: relative;">
+                                <canvas id="telemetry-canvas" height="120"></canvas>
+                                <div id="chart-tooltip" style="position: absolute; display: none; background: rgba(15,23,42,0.9); color: white; padding: 4px 8px; border-radius: 4px; font-size: 10px; pointer-events: none; white-space: nowrap; z-index: 10; font-weight: bold; font-family: monospace;"></div>
+                            </div>
                         </div>
 
                         <!-- Log & Outputs -->

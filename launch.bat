@@ -114,6 +114,7 @@ set "PYTHONPATH=%~dp0src"
 
 :: 2. 파이썬 버퍼링 제거 (UI 콘솔에 시스템 로그가 실시간으로 꽂히도록 강제)
 set "PYTHONUNBUFFERED=1"
+set "PYTHONIOENCODING=utf-8"
 
 :: 실행!
 python src\app_launcher.py

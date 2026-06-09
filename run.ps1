@@ -83,4 +83,5 @@ Write-Host "Activating virtual environment..." -ForegroundColor Cyan
 # [5] 메인 어플리케이션 진입 및 기동
 # 최종적으로 환경 설정 리포트 및 의존성을 정돈하는 launch.bat을 호출하여 실행합니다.
 Write-Host "Launching AMEVA Benchmark Suite..." -ForegroundColor Cyan
+$env:PYTHONIOENCODING="utf-8"
 cmd.exe /c launch.bat

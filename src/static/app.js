@@ -13,7 +13,7 @@ let harnessTasks = [];
 // Telemetry History
 const cpuHistory = [];
 const gpuHistory = [];
-const historyLimit = 50;
+const historyLimit = 3600;
 
 // Initialize
 window.addEventListener('DOMContentLoaded', async () => {
@@ -86,16 +86,27 @@ function updateTelemetry(data) {
     const vramPct = data.vram_total_mb > 0 ? (data.vram_used_mb / data.vram_total_mb) * 100 : 0;
     document.getElementById('bar-vram').style.width = `${vramPct}%`;
 
-    const power = data.power_w ? `${data.power_w.toFixed(1)}W` : 'N/A';
-    const temp = data.temp_c ? `${data.temp_c}°C` : 'N/A';
-    document.getElementById('val-power-temp').innerText = `전력: ${power}  |  온도: ${temp}`;
+    const power = data.power_w ? `${data.power_w.toFixed(1)}W` : '0.0W';
+    let tempStr = "";
+    if (data.cpu_temp_c !== undefined && data.cpu_temp_c > 0) tempStr += `CPU: ${data.cpu_temp_c.toFixed(1)}°C `;
+    else if (data.cpu_temp_c !== undefined) tempStr += `CPU: N/A `;
+    
+    if (data.temp_c !== undefined && data.temp_c > 0) tempStr += `GPU: ${data.temp_c}°C`;
+    else if (data.temp_c !== undefined) tempStr += `GPU: N/A`;
+    
+    if (!tempStr.trim()) tempStr = "0°C";
+    document.getElementById('val-power-temp').innerText = `전력: ${power}  |  온도: ${tempStr}`;
 
     cpuHistory.push(data.cpu);
     gpuHistory.push(data.gpu_percent);
     if (cpuHistory.length > historyLimit) cpuHistory.shift();
     if (gpuHistory.length > historyLimit) gpuHistory.shift();
 
-    drawTelemetryGraph();
+    resizeCanvas();
+    const container = document.getElementById('canvas-container');
+    if (container && container.scrollLeft + container.clientWidth >= container.scrollWidth - 50) {
+        container.scrollLeft = container.scrollWidth;
+    }
 }
 
 function handleIncomingLog(packet) {
@@ -173,52 +184,96 @@ function handleIncomingLog(packet) {
 // Telemetry Canvas Chart (Vanilla Graphics)
 // ─────────────────────────────────────────────────────────────────────────────
 
-let canvas, ctx;
+let canvas, ctx, canvasContainer, chartTooltip;
 function initCanvas() {
     canvas = document.getElementById('telemetry-canvas');
     ctx = canvas.getContext('2d');
+    canvasContainer = document.getElementById('canvas-container');
+    chartTooltip = document.getElementById('chart-tooltip');
+
     resizeCanvas();
     window.addEventListener('resize', resizeCanvas);
+
+    canvas.addEventListener('mousemove', handleCanvasHover);
+    canvas.addEventListener('mouseleave', () => { chartTooltip.style.display = 'none'; });
+}
+
+function handleCanvasHover(e) {
+    if (cpuHistory.length === 0) return;
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    
+    const step = 5; // 5px per point
+    const totalPoints = cpuHistory.length;
+    let index = Math.round(mouseX / step);
+    if (index < 0) index = 0;
+    if (index >= totalPoints) index = totalPoints - 1;
+
+    const cpuVal = cpuHistory[index] !== undefined ? cpuHistory[index].toFixed(1) : 0;
+    const gpuVal = gpuHistory[index] !== undefined ? gpuHistory[index].toFixed(1) : 0;
+    const timeStr = `-${totalPoints - 1 - index}s`;
+
+    chartTooltip.innerHTML = `시간: ${timeStr}<br>CPU: ${cpuVal}%<br>GPU: ${gpuVal}%`;
+    chartTooltip.style.left = (index * step + 15) + 'px';
+    chartTooltip.style.top = (e.clientY - canvasContainer.getBoundingClientRect().top - 20) + 'px';
+    chartTooltip.style.display = 'block';
 }
 
 function resizeCanvas() {
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    canvas.width = rect.width;
-    canvas.height = 80;
+    if (!canvas || !canvasContainer) return;
+    const containerWidth = canvasContainer.clientWidth;
+    const neededWidth = Math.max(containerWidth, cpuHistory.length * 5);
+    
+    if (canvas.width !== neededWidth) {
+        canvas.width = neededWidth;
+    }
+    canvas.height = 120;
     drawTelemetryGraph();
 }
 
 function drawTelemetryGraph() {
     if (!canvas || !ctx) return;
     const w = canvas.width;
-    const h = canvas.height;
+    const h = canvas.height - 20; // reserve bottom for X-axis
 
-    ctx.clearRect(0, 0, w, h);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     ctx.strokeStyle = 'rgba(46, 59, 78, 0.3)';
     ctx.lineWidth = 1;
-    for (let i = 1; i < 4; i++) {
-        const y = (h / 4) * i;
+    ctx.font = '9px monospace';
+    ctx.fillStyle = 'var(--text-muted)';
+    ctx.textAlign = 'left';
+
+    const yLabels = [0, 25, 50, 75, 100];
+    yLabels.forEach(yPct => {
+        const y = h - (yPct / 100) * (h - 6) - 3;
         ctx.beginPath();
         ctx.moveTo(0, y);
         ctx.lineTo(w, y);
         ctx.stroke();
-    }
+        ctx.fillText(yPct + '%', 2, y - 2);
+    });
 
-    const step = w / (historyLimit - 1);
-    drawDataLine(cpuHistory, step, '#3b82f6', 'rgba(59, 130, 246, 0.08)');
-    drawDataLine(gpuHistory, step, '#10b981', 'rgba(16, 185, 129, 0.08)');
+    const step = 5;
+    drawDataLine(cpuHistory, step, '#3b82f6', 'rgba(59, 130, 246, 0.2)', h);
+    drawDataLine(gpuHistory, step, '#10b981', 'rgba(16, 185, 129, 0.2)', h);
+    
+    // Draw X-axis
+    ctx.fillStyle = 'var(--text-muted)';
+    ctx.textAlign = 'center';
+    for(let i = 0; i < cpuHistory.length; i += 10) {
+        const x = i * step;
+        const timeLabel = `-${(cpuHistory.length - 1 - i)}s`;
+        ctx.fillText(timeLabel, x, canvas.height - 4);
+    }
 }
 
-function drawDataLine(history, step, color, fillGradientColor) {
+function drawDataLine(history, step, color, fillGradientColor, baseH) {
     if (history.length < 2) return;
-    const h = canvas.height;
-
     ctx.beginPath();
     history.forEach((val, i) => {
         const x = i * step;
-        const y = h - (val / 100) * (h - 6) - 3;
+        const y = baseH - (val / 100) * (baseH - 6) - 3;
         if (i === 0) ctx.moveTo(x, y);
         else ctx.lineTo(x, y);
     });
@@ -226,8 +281,8 @@ function drawDataLine(history, step, color, fillGradientColor) {
     ctx.lineWidth = 1.5;
     ctx.stroke();
 
-    ctx.lineTo((history.length - 1) * step, h);
-    ctx.lineTo(0, h);
+    ctx.lineTo((history.length - 1) * step, baseH);
+    ctx.lineTo(0, baseH);
     ctx.closePath();
     ctx.fillStyle = fillGradientColor;
     ctx.fill();

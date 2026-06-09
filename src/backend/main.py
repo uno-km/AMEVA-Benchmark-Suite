@@ -40,3 +40,15 @@ async def startup_event():
     from backend.routers.logs import start_broadcaster_task
     start_broadcaster_task()
     broadcaster.log("✅ AMEVA 벤치마크 시스템 초기화 완료. 커널 가동 명령 대기 중.", "sys")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """FastAPI 정상 종료 시 Docker 격리 공간을 해제하고 자원을 반납합니다."""
+    broadcaster.log("⚠️ AMEVA 백엔드 시스템 종료 중... Docker 자원 반납 진행.", "sys")
+    try:
+        from backend.state import state
+        if state.engine:
+            state.engine.shutdown()
+        broadcaster.log("✅ Docker 격리 자원 반납 완료.", "sys")
+    except Exception as e:
+        print(f"[Shutdown Error] {e}")
