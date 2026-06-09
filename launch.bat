@@ -56,7 +56,7 @@ echo [2/4] Checking Assets: LLM Edge Models...
 if not exist "models" mkdir models
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$check = Test-NetConnection huggingface.co -Port 443 -InformationLevel Quiet; if (-not $check) { Write-Host '[Warning] Firewall detected. Auto-download might fail.' -ForegroundColor Yellow }"
 
-powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; $ModelDir = '.\models'; $files = @{ 'qwen2.5-0.5b.gguf'='https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q8_0.gguf'; 'llama3.2-1b.gguf'='https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf' }; foreach($f in $files.Keys) { if(-not (Test-Path \"$ModelDir\$f\")) { curl.exe -k -L $files[$f] -o \"$ModelDir\$f\" } }"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ModelDir = '.\models'; $LocalSrc = 'C:\ameva\models\llm'; $files = @{ 'qwen2.5-0.5b.gguf'='https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q8_0.gguf'; 'llama3.2-1b.gguf'='https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf' }; foreach($f in $files.Keys) { if(-not (Test-Path \"$ModelDir\$f\")) { if (Test-Path \"$LocalSrc\$f\") { Write-Host \"[Info] Copying $f from $LocalSrc...\" -ForegroundColor Green; Copy-Item \"$LocalSrc\$f\" \"$ModelDir\$f\" } else { Write-Host \"[Info] Downloading $f from Hugging Face...\" -ForegroundColor Green; [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; curl.exe -k -L $files[$f] -o \"$ModelDir\$f\" } } }"
 
 if exist "models\qwen2.5-0.5b.gguf" set "MODEL_QWEN=Success"
 if exist "models\llama3.2-1b.gguf" set "MODEL_LLAMA=Success"
@@ -103,18 +103,13 @@ echo [4/4] Igniting AMEVA Matrix Core...
 :: 아키텍트의 노하우 주입 섹션 (Ignition Core)
 :: ======================================================================
 set "VENV_BASE=%~dp0venv"
-set "PYSIDE_PATH=%VENV_BASE%\Lib\site-packages\PySide6"
 
-:: 1. 시스템 환경 변수 최우선화 (Qt 플러그인 충돌 방지)
-set "PATH=%VENV_BASE%\Scripts;%PYSIDE_PATH%;%PYSIDE_PATH%\plugins;%PATH%"
-set "QT_QPA_PLATFORM_PLUGIN_PATH=%PYSIDE_PATH%\plugins\platforms"
+:: 1. 시스템 환경 변수 최우선화
+set "PATH=%VENV_BASE%\Scripts;%PATH%"
 set "PYTHONPATH=%~dp0src"
 
 :: 2. 파이썬 버퍼링 제거 (UI 콘솔에 시스템 로그가 실시간으로 꽂히도록 강제)
 set "PYTHONUNBUFFERED=1"
-
-:: 3. GUI가 알 수 없는 이유로 튕길 때 원인을 보기 위한 비상 디버그 스위치 (필요시 주석 해제)
-:: set "QT_DEBUG_PLUGINS=1"
 
 :: 실행!
 python src\app_launcher.py
