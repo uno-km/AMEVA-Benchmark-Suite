@@ -112,6 +112,18 @@ MODEL_CATALOGUE = [
         "hf_url":      "https://huggingface.co/bartowski/EEVE-Korean-Instruct-10.8B-v1.0-GGUF/resolve/main/EEVE-Korean-Instruct-10.8B-v1.0-Q4_K_M.gguf",
         "ollama_tag":  "eeve-korean:10.8b",
     },
+    {
+        "id":          "bitnet-b1.58-3b",
+        "display":     "BitNet-b1.58-3B",
+        "category":    "Heavy",
+        "tag":         "🟢 1-bit · 초저전력",
+        "desc":        "Microsoft BitNet 1.58비트 모델. CPU에서 GPU급 속도 구현. 에너지 효율 극대화.",
+        "min_ram_gb":  4,
+        "size_gb":     2.1,
+        "filename":    "bitnet_b1_58-3b-i1-matrix.gguf",
+        "hf_url":      "https://huggingface.co/2121-ai/BitNet-b1.58-3B-GGUF/resolve/main/bitnet_b1_58-3b-i1-matrix.gguf",
+        "ollama_tag":  "bitnet:3b",
+    },
 ]
 
 CATEGORY_META = {

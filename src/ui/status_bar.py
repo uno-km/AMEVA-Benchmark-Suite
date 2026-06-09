@@ -69,6 +69,11 @@ class AMEVAStatusBar(QStatusBar):
         self.ollama_ind.clicked.connect(self.service_request.emit)
         layout.addWidget(self.ollama_ind)
 
+        # 3. BitNet 지표
+        self.bitnet_ind = ServiceIndicator("bitnet", "BITNET")
+        self.bitnet_ind.clicked.connect(self.service_request.emit)
+        layout.addWidget(self.bitnet_ind)
+
         layout.addStretch()
 
         # 3. 다운로드 현황 (Background Progress)
@@ -105,6 +110,8 @@ class AMEVAStatusBar(QStatusBar):
             self.docker_ind.set_status(is_online, msg)
         elif name == "ollama":
             self.ollama_ind.set_status(is_online, msg)
+        elif name == "bitnet":
+            self.bitnet_ind.set_status(is_online, msg)
 
     def set_container_status(self, status: str, detail: str):
         """컨테이너 상태(IDLE/OFFLINE/RUNNING)를 시각적으로 업데이트"""

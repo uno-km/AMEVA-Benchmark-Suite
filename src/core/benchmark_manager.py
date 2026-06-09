@@ -215,9 +215,11 @@ class ExecutionEngine(QThread):
                 self._slog(f"모델 풀 완료: {model_name}")
             except Exception as e:
                 self._slog(f"[WARN] 모델 풀 실패 (이미 존재할 수 있음): {e}")
-        else:
+        elif engine_type == "ENG":
             url = f"http://{LLAMA_CPP_HOST}:{LLAMA_CPP_PORT}/completion"
             self._slog(f"LLAMA.CPP 엔드포인트: {url}")
+        else:
+            self._slog(f"BITNET.CPP 런타임 활성화 (CLI 모드)")
 
         has_nv = self.engine_core.container is not None # 컨테이너가 있고 nvida-smi 가능 시 True
         # 실제 HardwareService 기반 감지로 보강
@@ -286,69 +288,58 @@ class ExecutionEngine(QThread):
                     "stop": stop_tokens
                 }
 
-            # 2. [스트림 통신부] 정교한 바이트 단위 SSE 파서 구현 (한글 깨짐 방지)
+            # 2. [추론 브릿지] 엔진별 추론 실행
             try:
-                resp = requests.post(url, json=payload, stream=True, timeout=30)
-                resp.raise_for_status()
-                
-                buffer = b""
-                # SSE 규격상 하나의 이벤트는 \n\n 으로 끝납니다.
-                for chunk in resp.iter_content(chunk_size=1024):
-                    if self.isInterruptionRequested():
-                        break
-                    if not chunk:
-                        continue
+                if engine_type == "BIT":
+                    # Bitnet.cpp 전용 CLI 호출
+                    text_acc = self._run_bitnet_inference(formatted_prompt, model_name)
+                    tok_count = len(text_acc.split()) # 대략적인 토큰 수
+                    if ttft == 0: ttft = (time.time() - start_time) * 1000
+                else:
+                    # 기존 HTTP 스트리밍 로직 (OLM, ENG)
+                    resp = requests.post(url, json=payload, stream=True, timeout=30)
+                    resp.raise_for_status()
                     
-                    buffer += chunk
-                    
-                    while b"\n\n" in buffer:
-                        event_block, buffer = buffer.split(b"\n\n", 1)
-                        
-                        # 각 라인을 돌며 data: 접두사가 있는지 확인
-                        lines = event_block.decode('utf-8', errors='replace').split('\n')
-                        for line in lines:
-                            line = line.strip()
-                            if not line.startswith("data:"):
-                                continue
-                            
-                            payload_str = line[5:].strip()
-                            if payload_str == "[DONE]":
-                                break
-                            
-                            try:
-                                data = json.loads(payload_str)
-                            except json.JSONDecodeError:
-                                continue
-                            
-                            # 데이터 추출 및 TTFT 측정
-                            if ttft == 0:
-                                ttft = (time.time() - start_time) * 1000
-                            
-                            if engine_type == "OLM":
-                                token = data.get('response', '')
-                            else:
-                                token = data.get('content', '')
-                                
-                            if token:
-                                text_acc += token
-                                tok_count += 1
-                                self.token_signal.emit(1)
-                                self.chunk_signal.emit(token)
-                                
-                            # 종료 조건 체크
-                            if engine_type == "OLM":
-                                if data.get('done'): break
-                            else:
-                                if data.get('stop'):
-                                    t_info = data.get('timings', {})
-                                    prompt_n = t_info.get('prompt_n', 1)
-                                    p_ms = t_info.get('prompt_ms', 0)
-                                    prompt_ms_per_t = round(p_ms / prompt_n, 2) if prompt_n > 0 else 0
-                                    sample_ms = t_info.get('predicted_ms', 0)
-                                    break
-                                
+                    buffer = b""
+                    for chunk in resp.iter_content(chunk_size=1024):
+                        if self.isInterruptionRequested():
+                            break
+                        if not chunk: continue
+                        buffer += chunk
+                        while b"\n\n" in buffer:
+                            event_block, buffer = buffer.split(b"\n\n", 1)
+                            lines = event_block.decode('utf-8', errors='replace').split('\n')
+                            for line in lines:
+                                line = line.strip()
+                                if not line.startswith("data:"): continue
+                                payload_str = line[5:].strip()
+                                if payload_str == "[DONE]": break
+                                try:
+                                    data = json.loads(payload_str)
+                                except json.JSONDecodeError: continue
+                                if ttft == 0: ttft = (time.time() - start_time) * 1000
+                                if engine_type == "OLM":
+                                    token = data.get('response', '')
+                                else:
+                                    token = data.get('content', '')
+                                if token:
+                                    text_acc += token
+                                    tok_count += 1
+                                    self.token_signal.emit(1)
+                                    self.chunk_signal.emit(token)
+                                if engine_type == "OLM":
+                                    if data.get('done'): break
+                                else:
+                                    if data.get('stop'):
+                                        t_info = data.get('timings', {})
+                                        prompt_n = t_info.get('prompt_n', 1)
+                                        p_ms = t_info.get('prompt_ms', 0)
+                                        prompt_ms_per_t = round(p_ms / prompt_n, 2) if prompt_n > 0 else 0
+                                        sample_ms = t_info.get('predicted_ms', 0)
+                                        break
+                                        
             except Exception as e:
-                self._slog(f"[에러] 스트림 통신 실패: {e}")
+                self._slog(f"[에러] 추론 엔진 통신 실패: {e}")
                 self._log(f"[에러] {e}")
 
             duration = time.time() - start_time
@@ -462,3 +453,38 @@ class ExecutionEngine(QThread):
         
         # 업데이트된 결과 다시 전송
         self.report_signal.emit(results)
+
+    def _run_bitnet_inference(self, prompt: str, model_id: str) -> str:
+        """[Engineering] Docker exec를 통해 BitNet 바이너리를 실행하고 결과를 캡처합니다."""
+        if not self.engine_core.container:
+            return "[ERROR] No BitNet container available."
+
+        from .models_data import get_filename_by_id
+        model_file = get_filename_by_id(model_id)
+        
+        # BitNet.cpp의 run_inference.py 형식에 맞춰 호출
+        # -m: 모델 경로, -p: 프롬프트, -n: 생성 토큰 수
+        cmd = f'python3 run_inference.py -m /vault/{model_file} -p "{prompt}" -n 200'
+        
+        self._slog(f"[BIT] 실행: {cmd}")
+        try:
+            # 실시간 스트리밍 시도를 위해 stream=True 사용 가능하지만, 
+            # 일단 단순 exec_run으로 전체 결과를 받습니다. (향후 고도화 가능)
+            exit_code, output = self.engine_core.container.exec_run(cmd)
+            
+            decoded_output = output.decode('utf-8', errors='replace')
+            
+            # BitNet.cpp 출력물에서 실제 답변 부분만 추출하는 간단한 파싱
+            # (출력 형식에 따라 정교화 필요)
+            if "Answer:" in decoded_output:
+                answer = decoded_output.split("Answer:")[-1].strip()
+            else:
+                answer = decoded_output.strip()
+            
+            # UI에 결과 출력
+            self.chunk_signal.emit(answer)
+            return answer
+            
+        except Exception as e:
+            self._slog(f"[BIT] 실행 에러: {e}")
+            return f"[ERROR] {e}"

@@ -1,0 +1,16 @@
+[PR Title]
+Refactor ARM NEON i2_s kernel to support QK=128 and fix tensor corruption (Word Salad)
+
+[Description]
+Issue:
+When running .gguf models quantized with QK_I2_S = 128 (typically generated on x86) on ARM devices, the current NEON implementation forced QK_I2_S = 64. Furthermore, the manual loop unrolling logic (group32_num, la_num) contained hardcoded memory strides (* 16 for weights and * 64 for activations) that strictly assumed QK=64. This mismatch caused severe memory misalignment and output degeneration (word salad) on Android/ARM64.
+
+Fix:
+
+Forced QK = 128 in the NEON path to correctly match the GGUF packed format.
+
+Removed the legacy manual loop unrolling (group32_num / la_num). The hardcoded strides were incompatible with QK=128. Replaced it with a clean, unified block-level loop (for b = 0 to nb).
+
+Inside the block, the 32-byte weights are split into two 16-byte chunks for NEON vld1q_u8, maintaining 100% of the intrinsic SIMD performance while fetching the y activations with the correct 32-stride interleaving layout (exactly matching the AVX2 mathematical approach).
+
+This change completely resolves the garbage text output on Exynos/Snapdragon devices while keeping the code much cleaner and auto-vectorization friendly.

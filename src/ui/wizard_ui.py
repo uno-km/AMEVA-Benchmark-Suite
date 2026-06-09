@@ -27,6 +27,7 @@ class WizardUI(QWidget):
         self._engine_registry = [
             ("🔵  OLLAMA",    "OLM", "Managed Container – 자동 프로비저닝 (권장)"),
             ("⚡  LLAMA.CPP", "ENG", "GGUF Native Server – 최대 성능 / 최저 지연"),
+            ("🟢  BITNET.CPP", "BIT", "Microsoft BitNet.cpp – 1-bit LLM 정밀 타격 / 초저전력 추론"),
         ]
 
         self._engine_btns: dict[str, QPushButton] = {}
@@ -97,7 +98,8 @@ class WizardUI(QWidget):
         dlg = ModelGalleryDialog(
             current_model=self._active_model, 
             parent=self, 
-            dl_workers=self.ctrl._dl_workers
+            dl_workers=self.ctrl._dl_workers,
+            engine_type=self._active_engine
         )
         dlg.model_selected.connect(self._on_model_selected)
         dlg.install_requested.connect(self.ctrl._handle_download_request)

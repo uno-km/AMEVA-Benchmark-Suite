@@ -379,10 +379,14 @@ class AMEVAController(QMainWindow):
     # Background Download Manager
     # ──────────────────────────────────────────────────────────────────────
 
-    def _handle_download_request(self, info: dict, is_ollama: bool = False):
+    def _handle_download_request(self, info: dict, is_ollama: bool = False, engine_type: str = "ENG"):
         """모델 갤러리에서 날아온 다운로드 요청을 백그라운드에서 처리합니다."""
-        from ui.model_gallery import ModelDownloadWorker, OllamaPullWorker, MODELS_DIR
+        from ui.model_gallery import ModelDownloadWorker, OllamaPullWorker
+        from core.constants import get_vault_abs_path, get_bit_vault_abs_path
+        
         model_id = info["id"]
+        
+        dest_dir = get_bit_vault_abs_path() if engine_type == "BIT" else get_vault_abs_path()
         
         if model_id in self._dl_workers:
             return # 이미 진행 중
@@ -391,7 +395,7 @@ class AMEVAController(QMainWindow):
             worker = OllamaPullWorker(info)
             worker.progress_signal.connect(lambda mid, pct: self._on_dl_progress(mid, pct))
         else:
-            worker = ModelDownloadWorker(info, MODELS_DIR)
+            worker = ModelDownloadWorker(info, dest_dir)
             worker.progress_signal.connect(lambda pct, mid=model_id: self._on_dl_progress(mid, pct))
             
         worker.done_signal.connect(self._on_dl_done)

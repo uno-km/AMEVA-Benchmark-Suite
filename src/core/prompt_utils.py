@@ -15,6 +15,8 @@ class PromptFactory:
             return "CHATML"
         if "gemma" in name:
             return "GEMMA"
+        if "bitnet" in name:
+            return "BITNET"
         
         return "CHATML" # 기본값
 
@@ -47,7 +49,15 @@ class PromptFactory:
                 f"<start_of_turn>assistant\n"
             )
             
-        # 4. CHATML (Qwen, Phi-3, Yi, etc.)
+        # 4. BITNET (Microsoft b1.58 Standard)
+        elif family == "BITNET":
+            return (
+                f"<|begin_of_text|>System: {system_prompt}\n"
+                f"User: {prompt}\n"
+                f"Assistant: "
+            )
+            
+        # 5. CHATML (Qwen, Phi-3, Yi, etc.)
         else:
             return (
                 f"<|im_start|>system\n{system_prompt}<|im_end|>\n"
@@ -66,5 +76,7 @@ def get_stop_tokens(model_name: str) -> list:
         return base_stops + ["[입력]", "[출력]"]
     if family == "GEMMA":
         return base_stops + ["<end_of_turn>"]
+    if family == "BITNET":
+        return base_stops + ["<|eot_id|>", "User:", "System:"]
         
     return base_stops

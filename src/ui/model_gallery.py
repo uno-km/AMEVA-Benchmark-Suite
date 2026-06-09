@@ -2,14 +2,15 @@ import os
 import json
 import requests
 from ui.qt_bridge import *
-from core.constants import get_vault_abs_path, OLLAMA_BASE_URL
+from core.constants import get_vault_abs_path, get_bit_vault_abs_path, OLLAMA_BASE_URL
 from core.ollama_client import OllamaClient
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Model Catalogue
 # ─────────────────────────────────────────────────────────────────────────────
 
-MODELS_DIR = get_vault_abs_path()
+# GLOBAL_MODELS_DIR remains for backward compatibility or default use
+DEFAULT_MODELS_DIR = get_vault_abs_path()
 
 from core.models_data import MODEL_CATALOGUE, CATEGORY_META
 
@@ -218,9 +219,10 @@ class ModelCard(QFrame):
     install_clicked = Signal(dict)       # model_info 전달
     select_clicked  = Signal(str, str) # model_name, engine_type 전달
 
-    def __init__(self, info: dict, installed: bool, is_current: bool, ollama_on: bool = False, parent=None):
+    def __init__(self, info: dict, installed: bool, is_current: bool, ollama_on: bool = False, parent=None, engine_type: str = "ENG"):
         super().__init__(parent)
         self._info = info
+        self._engine_type = engine_type
         self._build(installed, is_current, ollama_on)
 
     def _build(self, installed: bool, is_current: bool, ollama_on: bool):
@@ -282,7 +284,11 @@ class ModelCard(QFrame):
 
         # GGUF Block
         gguf_row = QHBoxLayout()
-        self.gguf_status = QLabel("📦 GGUF")
+        label_text = "📦 GGUF"
+        if self._engine_type == "BIT":
+            label_text = "🟢 BITNET"
+            
+        self.gguf_status = QLabel(label_text)
         self.gguf_status.setStyleSheet("font-size: 10px; color: #64748b;")
         self.btn_gguf = QPushButton("⬇ 다운로드")
         self.btn_gguf.setObjectName("InstallBtn")
@@ -323,7 +329,7 @@ class ModelCard(QFrame):
                 self.btn_gguf.clicked.disconnect()
             except (TypeError, RuntimeError):
                 pass
-            self.btn_gguf.clicked.connect(lambda: self.select_clicked.emit(self._info["id"], "ENG"))
+            self.btn_gguf.clicked.connect(lambda: self.select_clicked.emit(self._info["id"], self._engine_type))
         else:
             self.btn_gguf.setText("⬇ 다운로드")
             self.btn_gguf.setObjectName("InstallBtn")
@@ -372,11 +378,14 @@ class ModelGalleryDialog(QDialog):
     """모델 갤러리 모달."""
 
     model_selected = Signal(str, str) # name, engine_type
-    install_requested = Signal(dict, bool) # info, is_ollama
+    install_requested = Signal(dict, bool, str) # info, is_ollama, engine_type
 
-    def __init__(self, current_model: str = "", parent=None, dl_workers: dict = None):
+    def __init__(self, current_model: str = "", parent=None, dl_workers: dict = None, engine_type: str = "ENG"):
         super().__init__(parent)
-        self.setWindowTitle("🛠️  모델 갤러리 · 설치 & 관리")
+        self._engine_type = engine_type
+        self._models_dir = get_bit_vault_abs_path() if engine_type == "BIT" else get_vault_abs_path()
+        
+        self.setWindowTitle(f"🛠️  모델 갤러리 · {engine_type} 전용")
         self.setMinimumSize(780, 640)
         self.setStyleSheet(_GALLERY_QSS)
         self.setModal(True)
@@ -438,7 +447,7 @@ class ModelGalleryDialog(QDialog):
                     continue
                 installed  = self._is_installed(info)
                 is_current = (info["ollama_tag"] == self._current_model) or (info["id"] == self._current_model)
-                card = ModelCard(info, installed, is_current, ollama_on=self._is_ollama_installed(info["ollama_tag"]))
+                card = ModelCard(info, installed, is_current, ollama_on=self._is_ollama_installed(info["ollama_tag"]), engine_type=self._engine_type)
                 card.install_clicked.connect(self._on_install)
                 card.select_clicked.connect(self._on_select)
                 
@@ -456,7 +465,7 @@ class ModelGalleryDialog(QDialog):
         root.addWidget(scroll, 1)
 
         footer = QHBoxLayout()
-        self._footer_note = QLabel(f"📁 모델 저장 경로: {MODELS_DIR}")
+        self._footer_note = QLabel(f"📁 모델 저장 경로: {self._models_dir}")
         self._footer_note.setStyleSheet("color: #475569; font-size: 10px;")
         footer.addWidget(self._footer_note)
         footer.addStretch()
@@ -469,7 +478,7 @@ class ModelGalleryDialog(QDialog):
         root.addLayout(footer)
 
     def _is_installed(self, info: dict) -> bool:
-        path = os.path.join(MODELS_DIR, info["filename"])
+        path = os.path.join(self._models_dir, info["filename"])
         return os.path.isfile(path)
 
     def _is_ollama_installed(self, ollama_tag: str) -> bool:
@@ -494,7 +503,7 @@ class ModelGalleryDialog(QDialog):
     def _on_install(self, info: dict):
         model_id = info["id"]
         if model_id in self._workers: return
-        self.install_requested.emit(info, False)
+        self.install_requested.emit(info, False, self._engine_type)
         # UI 업데이트는 _workers가 외부에서 갱신되거나, 타임에 의해 동기화됨
         # (여기서는 일단 즉시 spinner만 켜줌)
         card = self._cards[model_id]

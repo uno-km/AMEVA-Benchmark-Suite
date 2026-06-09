@@ -22,6 +22,8 @@ class ServiceMonitorThread(QThread):
             self._check_docker()
             # 2. Ollama 체크
             self._check_ollama()
+            # 3. Bitnet 체크
+            self._check_bitnet()
             
             time.sleep(self._interval)
 
@@ -44,6 +46,24 @@ class ServiceMonitorThread(QThread):
             self.status_updated.emit("ollama", True, f"Ollama API is serving ({len(models)} models found).")
         except Exception as e:
             self.status_updated.emit("ollama", False, "Ollama is not responding.")
+    def _check_bitnet(self):
+        try:
+            client = docker.from_env()
+            containers = client.containers.list(filters={"name": "edgematrix_v5_5_arena"})
+            if containers:
+                container = containers[0]
+                if "bitnet-matrix" in container.image.tags[0] if container.image.tags else "":
+                    status = container.status
+                    if status == "running":
+                        self.status_updated.emit("bitnet", True, "BitNet.cpp Container is LIVE.")
+                    else:
+                        self.status_updated.emit("bitnet", False, f"BitNet Container is {status}.")
+                else:
+                    self.status_updated.emit("bitnet", False, "Inactive (Other engine running).")
+            else:
+                self.status_updated.emit("bitnet", False, "BitNet container not found.")
+        except Exception:
+            self.status_updated.emit("bitnet", False, "Docker unreachable.")
 
     def attempt_start(self, service_name: str):
         """서비스 시작 시도 (Windows 전용 기본 경로)"""

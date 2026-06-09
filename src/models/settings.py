@@ -4,7 +4,7 @@ from typing import Dict, Any
 @dataclass
 class BootstrapConfig:
     """도커 부팅을 위한 구성 모델"""
-    engine: str = "OLM"  # OLM 또는 ENG
+    engine: str = "OLM"  # OLM, ENG, 또는 BIT
     cpu_cores: float = 2.0
     ram_mb: int = 4096
     gpu_layers: int = 0

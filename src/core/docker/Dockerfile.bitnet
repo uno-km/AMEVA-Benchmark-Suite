@@ -1,0 +1,50 @@
+# [AMEVA] BitNet.cpp Optimized Build Environment
+FROM ubuntu:22.04
+
+# Avoid interactive prompts during build
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Update and install system dependencies
+RUN apt-get update && apt-get install -y \
+    cmake \
+    build-essential \
+    git \
+    wget \
+    gnupg \
+    software-properties-common \
+    python3 \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install LLVM/Clang 18 (Required for BitNet.cpp kernels)
+RUN wget https://apt.llvm.org/llvm.sh && \
+    chmod +x llvm.sh && \
+    ./llvm.sh 18 && \
+    rm llvm.sh
+
+# Set Clang as the default compiler
+ENV CC=clang-18
+ENV CXX=clang++-18
+
+# Set working directory
+WORKDIR /app
+
+# Clone BitNet repository
+RUN git clone --recursive https://github.com/microsoft/BitNet.git /app/BitNet
+
+# Install Python requirements for BitNet
+WORKDIR /app/BitNet
+RUN pip3 install -r requirements.txt
+
+# Initial build to prepare kernels and binaries
+RUN mkdir -p build && cd build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release && \
+    make -j$(nproc)
+
+# Final workspace setup
+WORKDIR /app/BitNet
+VOLUME /vault
+
+# Keep the container alive by default if needed, 
+# but MatrixEngine will override this with 'tail -f /dev/null'
+CMD ["python3", "run_inference.py", "--help"]

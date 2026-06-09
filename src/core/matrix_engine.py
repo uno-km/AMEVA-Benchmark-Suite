@@ -2,7 +2,10 @@ import docker
 import time
 import os
 from typing import Optional, Callable, Dict, Tuple
-from core.constants import OLLAMA_BASE_URL, LLAMA_CPP_HOST, LLAMA_CPP_PORT, get_vault_abs_path, INTERNAL_VAULT_PATH
+from core.constants import (
+    OLLAMA_BASE_URL, LLAMA_CPP_HOST, LLAMA_CPP_PORT,
+    get_vault_abs_path, get_bit_vault_abs_path, INTERNAL_VAULT_PATH
+)
 from core.models_data import get_filename_by_id
 
 
@@ -59,8 +62,13 @@ class MatrixEngine:
             self.cleanup_old_arena()
 
             # Volumes
-            from .constants import get_vault_abs_path, INTERNAL_VAULT_PATH, OLLAMA_BASE_URL, LLAMA_CPP_PORT
-            models_dir = get_vault_abs_path()
+            from .constants import get_vault_abs_path, get_bit_vault_abs_path, INTERNAL_VAULT_PATH, OLLAMA_BASE_URL, LLAMA_CPP_PORT
+            
+            if engine_type == "BIT":
+                models_dir = get_bit_vault_abs_path()
+            else:
+                models_dir = get_vault_abs_path()
+                
             os.makedirs(models_dir, exist_ok=True)
             volumes = {models_dir: {'bind': INTERNAL_VAULT_PATH, 'mode': 'rw'}}
             self._log(f"· 볼륨 마운트 준비: {models_dir} → {INTERNAL_VAULT_PATH}")
@@ -80,7 +88,7 @@ class MatrixEngine:
                 cmd = None
                 ports = {'11434/tcp': 11434}
                 self._log(f"· 런타임: OLLAMA (Managed API, port 11434)")
-            else:
+            elif engine_type == "ENG":
                 image = "ghcr.io/ggml-org/llama.cpp:server"
                 actual_filename = get_filename_by_id(model_name)
                 # 경로 수정: /models -> /vault. 조회된 실제 파일명 사용.
@@ -88,6 +96,15 @@ class MatrixEngine:
                        "--host", "0.0.0.0", "--port", str(LLAMA_CPP_PORT)]
                 ports = {f'{LLAMA_CPP_PORT}/tcp': LLAMA_CPP_PORT}
                 self._log(f"· 런타임: LLAMA.CPP Server (GGUF: {actual_filename})")
+            elif engine_type == "BIT":
+                image = "bitnet-matrix:latest"
+                self._build_bitnet_image(client)
+                actual_filename = get_filename_by_id(model_name)
+                # Bitnet.cpp는 서버 모드가 없으면 쉘을 유지하기 위해 무한 대기 명령 사용 가능
+                # 혹은 추론 직전까지 대기하는 시뮬레이션
+                cmd = ["tail", "-f", "/dev/null"] 
+                ports = {} # No default port for CLI tool
+                self._log(f"· 런타임: BitNet.cpp (Ubuntu Optimized, Binary: {actual_filename})")
 
             # Image check/pull
             self._log(f"이미지 인스펙션 중: {image}")
@@ -142,6 +159,9 @@ class MatrixEngine:
             server_ready = self._wait_for_server_ready(engine_type, model_name, deadline_sec=60)
             if server_ready:
                 self._log("✓ 서버 준비 완료. 추론 가능 상태.")
+            elif engine_type == "BIT":
+                self._log("✓ BitNet 컨테이너 준비 완료. 바이너리 실행 준비.")
+                return True, f"[{engine_type}] READY  CPU:{cpu_cores}c  RAM:{ram_mb}MB"
             else:
                 self._log("[WARN] 서버 준비 시간초과 (60초) - 재시도 로직 활사화")
             
@@ -181,6 +201,26 @@ class MatrixEngine:
             time.sleep(1.5)
         
         return False
+        
+
+    def _build_bitnet_image(self, client):
+        """Ubuntu 기반 BitNet.cpp 이미지를 빌드합니다."""
+        try:
+            client.images.get("bitnet-matrix:latest")
+            self._log("✓ BitNet.cpp 로컬 이미지 존재")
+        except docker.errors.ImageNotFound:
+            self._log("↓ BitNet.cpp 이미지가 없습니다. 빌드 시작 (Ubuntu 기반)...")
+            dockerfile_path = os.path.join(os.path.dirname(__file__), "docker")
+            image, logs = client.images.build(
+                path=dockerfile_path,
+                dockerfile="Dockerfile.bitnet",
+                tag="bitnet-matrix:latest",
+                rm=True
+            )
+            for log in logs:
+                if 'stream' in log:
+                    self._log(f"  [BUILD] {log['stream'].strip()}")
+            self._log("✓ BitNet.cpp 이미지 빌드 완료")
         
 
     def run_llama_bench(self, model_name: str, options: dict) -> dict:
