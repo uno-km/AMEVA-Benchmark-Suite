@@ -312,6 +312,7 @@
                                 <input type="checkbox" id="report-llm-summary" checked> Word 출력 시 AI 분석 요약 포함
                             </label>
                             <button class="btn btn-primary" onclick="exportFullExcel()">전체 Excel 다운로드</button>
+                            <button class="btn btn-accent" onclick="openDocQueueModal()" id="btn-doc-queue-trigger">📁 문서 작업 대기열 (0)</button>
                             <button class="btn" onclick="loadReports()">새로고침</button>
                         </div>
                     </div>
@@ -602,6 +603,42 @@
             </div>
             <div class="modal-footer" style="border-top-color: var(--border-color);">
                 <button class="btn" onclick="closeModal('task-detail')">닫기</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: Document Queue -->
+    <div id="modal-doc-queue" class="modal-overlay">
+        <div class="modal" style="max-width: 750px; max-height: 80vh;">
+            <div class="modal-header">
+                <h2>📁 Word 보고서 백그라운드 생성 대기열</h2>
+                <button class="btn" style="padding: 4px 8px;" onclick="closeModal('doc-queue')">✖</button>
+            </div>
+            <div class="modal-body" style="padding: 16px; display:flex; flex-direction:column; gap:16px;">
+                <div style="font-size: 11px; color: var(--text-muted);">
+                    AI 요약 분석을 포함한 Word 보고서 생성은 백그라운드에서 순차적으로 처리됩니다. 대기 상태인 작업은 취소(✕)할 수 있습니다.
+                </div>
+                <div style="flex: 1; overflow-y:auto; border: 1px solid var(--border-color); border-radius:6px; min-height: 200px;">
+                    <table style="width: 100%;">
+                        <thead>
+                            <tr>
+                                <th>요청 시간</th>
+                                <th>대상 모델 (Run ID)</th>
+                                <th>AI 요약</th>
+                                <th>상태 / 진행 상황</th>
+                                <th style="text-align: center; width: 140px;">작업</th>
+                            </tr>
+                        </thead>
+                        <tbody id="doc-queue-tbody">
+                            <tr>
+                                <td colspan="5" style="text-align: center; color: var(--text-muted);">대기 중인 작업이 없습니다.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" onclick="closeModal('doc-queue')">닫기</button>
             </div>
         </div>
     </div>

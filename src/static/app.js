@@ -23,6 +23,10 @@ window.addEventListener('DOMContentLoaded', async () => {
     initCanvas();
     await loadConfigFromBackend();
     await loadOllamaJudgeModels();
+    
+    // 문서 백그라운드 큐 상태 점검
+    loadDocQueue();
+    startDocQueuePolling();
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1187,14 +1191,8 @@ function exportSingleExcel(runId) {
 async function exportSingleWord(runId) {
     const useLlm = document.getElementById('report-llm-summary').checked;
     
-    // 파일 다운로드 중이라는 피드백 제공 (LLM 동작 시 수 초 소요될 수 있음)
-    const toast = document.getElementById('toast');
-    toast.innerText = "📝 Word 보고서 생성 및 AI 요약 분석 중…";
-    toast.style.backgroundColor = "var(--warn)";
-    toast.style.display = 'block';
-
     try {
-        const resp = await fetch('/api/reports/export/word', {
+        const resp = await fetch('/api/reports/export/word/queue', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -1203,24 +1201,148 @@ async function exportSingleWord(runId) {
             })
         });
         
-        toast.style.display = 'none';
-        
         if (resp.ok) {
-            const blob = await resp.blob();
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `AMEVA_Report_Run_${runId}.docx`;
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
+            const toast = document.getElementById('toast');
+            toast.innerText = "📝 Word 보고서 생성이 대기열에 등록되었습니다.";
+            toast.style.backgroundColor = "var(--accent)";
+            toast.style.display = 'block';
+            setTimeout(() => { toast.style.display = 'none'; }, 2000);
+            
+            // 대기열 목록 자동 오픈
+            openDocQueueModal();
         } else {
-            alert("보고서 생성 실패");
+            alert("대기열 등록 실패");
         }
     } catch (e) {
-        toast.style.display = 'none';
-        alert("네트워크 장애로 보고서를 다운로드할 수 없습니다.");
+        alert("네트워크 장애로 대기열에 등록하지 못했습니다.");
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DOCUMENT EXPORT BACKGROUND QUEUE MANAGEMENT
+// ─────────────────────────────────────────────────────────────────────────────
+let docQueueInterval = null;
+let activeDocQueueTasksCount = 0;
+
+function openDocQueueModal() {
+    document.getElementById('modal-doc-queue').classList.add('active');
+    loadDocQueue();
+    startDocQueuePolling();
+}
+
+async function loadDocQueue() {
+    const tbody = document.getElementById('doc-queue-tbody');
+    try {
+        const resp = await fetch('/api/reports/export/word/queue');
+        if (!resp.ok) return;
+        const tasks = await resp.json();
+        
+        tbody.innerHTML = "";
+        if (tasks.length === 0) {
+            tbody.innerHTML = "<tr><td colspan='5' style='text-align: center; color: var(--text-muted);'>대기 중인 작업이 없습니다.</td></tr>";
+            updateDocQueueBadge(0);
+            return;
+        }
+
+        let activeCount = 0;
+        tasks.forEach(t => {
+            if (t.status === 'pending' || t.status === 'processing') {
+                activeCount++;
+            }
+            
+            const tr = document.createElement('tr');
+            
+            let statusText = "";
+            let actionHtml = "";
+            
+            if (t.status === 'pending') {
+                statusText = `<span style="color:var(--text-muted);">⏳ 대기 중 (${t.message})</span>`;
+                actionHtml = `<button class="btn btn-danger" style="padding: 2px 6px; font-size:11px;" onclick="cancelDocTask('${t.task_id}')">✕ 취소</button>`;
+            } else if (t.status === 'processing') {
+                statusText = `<span style="color:var(--warn); font-weight:700;">⚙️ 진행 중 (${t.message})</span>`;
+                actionHtml = `<button class="btn btn-danger" style="padding: 2px 6px; font-size:11px;" onclick="cancelDocTask('${t.task_id}')">✕ 취소</button>`;
+            } else if (t.status === 'completed') {
+                statusText = `<span style="color:var(--accent); font-weight:700;">✅ 완료</span>`;
+                actionHtml = `
+                    <button class="btn btn-primary" style="padding: 2px 6px; font-size:11px;" onclick="downloadDocFile('${t.task_id}')">💾 다운로드</button>
+                    <button class="btn btn-danger" style="padding: 2px 6px; font-size:11px;" onclick="removeDocTask('${t.task_id}')">🗑️</button>
+                `;
+            } else if (t.status === 'failed') {
+                statusText = `<span style="color:var(--danger); font-weight:700;" title="${t.error || ''}">❌ 실패 (${t.message})</span>`;
+                actionHtml = `<button class="btn btn-danger" style="padding: 2px 6px; font-size:11px;" onclick="removeDocTask('${t.task_id}')">🗑️</button>`;
+            } else if (t.status === 'cancelled') {
+                statusText = `<span style="color:var(--text-muted);">🚫 취소됨</span>`;
+                actionHtml = `<button class="btn btn-danger" style="padding: 2px 6px; font-size:11px;" onclick="removeDocTask('${t.task_id}')">🗑️</button>`;
+            }
+            
+            tr.innerHTML = `
+                <td>${t.created_at}</td>
+                <td><strong style="color:#fff;">${t.model_name}</strong> <span style="font-size:10px; color:var(--text-muted);">(Run ${t.run_id})</span></td>
+                <td>${t.use_llm_summary ? '✅ 포함' : '❌ 제외'}</td>
+                <td>${statusText}</td>
+                <td style="text-align: center;">${actionHtml}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+        
+        updateDocQueueBadge(activeCount);
+    } catch(e) {
+        console.error("Failed to load doc queue", e);
+    }
+}
+
+function updateDocQueueBadge(activeCount) {
+    activeDocQueueTasksCount = activeCount;
+    const triggerBtn = document.getElementById('btn-doc-queue-trigger');
+    if (triggerBtn) {
+        triggerBtn.innerText = `📁 문서 작업 대기열 (${activeCount})`;
+        if (activeCount > 0) {
+            triggerBtn.style.borderColor = 'var(--warn)';
+            triggerBtn.style.color = 'var(--warn)';
+        } else {
+            triggerBtn.style.borderColor = '';
+            triggerBtn.style.color = '';
+        }
+    }
+}
+
+function startDocQueuePolling() {
+    if (docQueueInterval) clearInterval(docQueueInterval);
+    docQueueInterval = setInterval(() => {
+        const modal = document.getElementById('modal-doc-queue');
+        if (modal.classList.contains('active') || activeDocQueueTasksCount > 0) {
+            loadDocQueue();
+        } else {
+            clearInterval(docQueueInterval);
+            docQueueInterval = null;
+        }
+    }, 2000);
+}
+
+async function cancelDocTask(taskId) {
+    try {
+        const resp = await fetch(`/api/reports/export/word/queue/${taskId}`, { method: 'DELETE' });
+        if (resp.ok) {
+            loadDocQueue();
+        }
+    } catch(e) {
+        alert("취소 실패");
+    }
+}
+
+async function removeDocTask(taskId) {
+    try {
+        const resp = await fetch(`/api/reports/export/word/queue/${taskId}`, { method: 'DELETE' });
+        if (resp.ok) {
+            loadDocQueue();
+        }
+    } catch(e) {
+        alert("삭제 실패");
+    }
+}
+
+function downloadDocFile(taskId) {
+    window.open(`/api/reports/export/word/download/${taskId}`, '_blank');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

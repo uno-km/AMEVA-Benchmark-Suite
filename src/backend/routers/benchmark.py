@@ -1133,34 +1133,329 @@ def export_excel(run_id: int = 0):
         filename=f"AMEVA_Benchmark_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
     )
 
+# ─────────────────────────────────────────────────────────────────────────────
+# DOCUMENT EXPORT QUEUE SYSTEM
+# ─────────────────────────────────────────────────────────────────────────────
+import queue
+import uuid
+
+class DocExportTask:
+    def __init__(self, task_id: str, run_id: int, model_name: str, use_llm_summary: bool):
+        self.task_id = task_id
+        self.run_id = run_id
+        self.model_name = model_name
+        self.use_llm_summary = use_llm_summary
+        self.status = "pending"  # "pending", "processing", "completed", "failed", "cancelled"
+        self.message = "대기 중"
+        self.file_path = None
+        self.filename = None
+        self.error = None
+        self.created_at = datetime.now().strftime("%H:%M:%S")
+
+class DocExportQueueManager:
+    def __init__(self):
+        self.tasks = []
+        self.lock = threading.Lock()
+        self.task_queue = queue.Queue()
+        self.worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
+        self.worker_thread.start()
+
+    def add_task(self, run_id: int, model_name: str, use_llm_summary: bool) -> str:
+        task_id = f"doc_{uuid.uuid4().hex[:8]}"
+        task = DocExportTask(task_id, run_id, model_name, use_llm_summary)
+        with self.lock:
+            self.tasks.append(task)
+        self.task_queue.put(task_id)
+        return task_id
+
+    def cancel_task(self, task_id: str) -> bool:
+        with self.lock:
+            for task in self.tasks:
+                if task.task_id == task_id:
+                    if task.status in ("pending", "processing"):
+                        task.status = "cancelled"
+                        task.message = "취소됨"
+                        return True
+        return False
+
+    def remove_task(self, task_id: str) -> bool:
+        with self.lock:
+            for i, task in enumerate(self.tasks):
+                if task.task_id == task_id:
+                    if task.file_path and os.path.exists(task.file_path):
+                        try:
+                            os.remove(task.file_path)
+                        except:
+                            pass
+                    self.tasks.pop(i)
+                    return True
+        return False
+
+    def get_task(self, task_id: str):
+        with self.lock:
+            for task in self.tasks:
+                if task.task_id == task_id:
+                    return task
+        return None
+
+    def get_all_tasks(self):
+        with self.lock:
+            return [
+                {
+                    "task_id": t.task_id,
+                    "run_id": t.run_id,
+                    "model_name": t.model_name,
+                    "status": t.status,
+                    "message": t.message,
+                    "use_llm_summary": t.use_llm_summary,
+                    "filename": t.filename,
+                    "error": t.error,
+                    "created_at": t.created_at
+                }
+                for t in self.tasks
+            ]
+
+    def _worker_loop(self):
+        import time
+        while True:
+            try:
+                task_id = self.task_queue.get()
+                task = self.get_task(task_id)
+                if not task:
+                    self.task_queue.task_done()
+                    continue
+                if task.status == "cancelled":
+                    self.task_queue.task_done()
+                    continue
+
+                with self.lock:
+                    task.status = "processing"
+                    task.message = "문서 정보 수집 중..."
+
+                try:
+                    self._generate_document(task)
+                except Exception as e:
+                    with self.lock:
+                        task.status = "failed"
+                        task.message = "문서 생성 실패"
+                        task.error = str(e)
+                        
+                self.task_queue.task_done()
+            except Exception as e:
+                print(f"[DocExportQueueManager worker error] {e}")
+                time.sleep(1.0)
+
+    def _generate_document(self, task: DocExportTask):
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT * FROM benchmark_runs WHERE id = ?;", (task.run_id,))
+        run_row = cursor.fetchone()
+        if not run_row:
+            conn.close()
+            with self.lock:
+                task.status = "failed"
+                task.message = "해당 런을 찾을 수 없음"
+            return
+        run = dict(run_row)
+        
+        cursor.execute("SELECT * FROM benchmark_results WHERE run_id = ?;", (task.run_id,))
+        results = [dict(r) for r in cursor.fetchall()]
+        conn.close()
+
+        if not results:
+            with self.lock:
+                task.status = "failed"
+                task.message = "벤치마크 결과 없음"
+            return
+
+        if task.status == "cancelled":
+            return
+
+        summary_text = "요약을 비활성화했습니다."
+        if task.use_llm_summary:
+            judge_model = run.get("judge_model", state.config_data["default_judge_model"])
+            with self.lock:
+                task.message = "AI 요약 분석 중..."
+            broadcaster.log(f"📝 보고서 분석용 요약 요청 시작: {judge_model}", "sys")
+            
+            prompt_data = (
+                "아래 하네스 벤치마크 결과를 요약 분석하여, 해당 AI 엣지 디바이스 구동환경에서의 모델의 "
+                "추론 속도, 지능 지표, 전력 효율성 측면의 강점과 한계점을 5줄 내외의 격식 있고 일목요연한 "
+                "한글 요약글(Executive Summary)로 작성해 주세요. 문단 앞머리에 마크다운이나 특수 기호 없이 담백하게 작성하세요.\n\n"
+                f"모델: {run['model_name']} ({run['engine_type']} 엔진)\n"
+                f"설정: Cores={run['cpu_cores']}, RAM={run['ram_mb']}MB, Threads={run['threads']}, Context={run['n_ctx']}\n"
+                "상세 태스크 지표:\n"
+            )
+            for r in results:
+                prompt_data += f"- {r['task_name']} ({r['category']}): TTFT={r['ttft_ms']}ms, TPS={r['tps']}t/s, 전력={r['avg_gpu_w']}W, 점수={r['judge_score']}/10\n"
+
+            try:
+                from core.ollama_client import OllamaClient
+                import json
+                messages = [
+                    {"role": "system", "content": "You are a professional IT technology reporting assistant. Answer in precise Korean."},
+                    {"role": "user", "content": prompt_data}
+                ]
+                resp = OllamaClient.chat_stream(judge_model, messages, options={"temperature": 0.2})
+                resp.raise_for_status()
+                
+                full_summary = ""
+                for line in resp.iter_lines():
+                    if task.status == "cancelled":
+                        return
+                    if line:
+                        chunk = json.loads(line)
+                        content = chunk.get("message", {}).get("content", "")
+                        full_summary += content
+                summary_text = full_summary.strip()
+                broadcaster.log("📝 보고서 요약 생성 완료.", "sys")
+            except Exception as e:
+                summary_text = f"요약 실패 (에러: {e})"
+                broadcaster.log(f"❌ 보고서 요약 실패: {e}", "sys")
+
+        if task.status == "cancelled":
+            return
+
+        with self.lock:
+            task.message = "Word 문서 빌드 중..."
+
+        from docx import Document
+        from docx.shared import Pt, RGBColor, Inches
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        from docx.oxml import parse_xml
+        from docx.oxml.ns import nsdecls
+
+        doc = Document()
+        
+        style = doc.styles['Normal']
+        font = style.font
+        font.name = '맑은 고딕'
+        font.size = Pt(11)
+
+        title_p = doc.add_paragraph()
+        title_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        title_run = title_p.add_run("AMEVA AI 엣지 벤치마크 성능 평가 결과 보고서")
+        title_run.font.size = Pt(20)
+        title_run.font.bold = True
+        title_run.font.color.rgb = RGBColor(15, 23, 42)
+
+        doc.add_paragraph(f"보고서 생성일시: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        
+        doc.add_heading("1. 구동 환경 사양 및 모델 요약", level=2)
+        meta_p = doc.add_paragraph()
+        meta_p.add_run(f"• 대상 모델: {run['model_name']}\n").bold = True
+        meta_p.add_run(f"• 추론 엔진: {run['engine_type']}\n")
+        meta_p.add_run(f"• 할당 자원: CPU Cores={run['cpu_cores']} | RAM={run['ram_mb']}MB | GPU Layers={run['gpu_layers']}\n")
+        meta_p.add_run(f"• 튜닝 파라미터: Threads={run['threads']} | n_ctx={run['n_ctx']} | Temp={run['temperature']}\n")
+        meta_p.add_run(f"• 평가에 사용된 판정관: {run['judge_model']}")
+
+        doc.add_heading("2. Executive Summary (AI 종합 분석 요약)", level=2)
+        summary_box = doc.add_paragraph()
+        summary_box.paragraph_format.left_indent = Inches(0.2)
+        summary_box.paragraph_format.right_indent = Inches(0.2)
+        run_sum = summary_box.add_run(summary_text)
+        run_sum.italic = True
+        run_sum.font.size = Pt(10.5)
+
+        doc.add_heading("3. 태스크별 세부 측정 데이터", level=2)
+        
+        table = doc.add_table(rows=1, cols=6)
+        table.style = 'Light Shading Accent 1'
+        hdr_cells = table.rows[0].cells
+        hdr_cells[0].text = 'Task ID'
+        hdr_cells[1].text = 'TTFT'
+        hdr_cells[2].text = 'TPS'
+        hdr_cells[3].text = '평균전력'
+        hdr_cells[4].text = '전성비(t/J)'
+        hdr_cells[5].text = '판정점수'
+
+        def set_cell_background(cell, color_hex):
+            shd_xml = f'<w:shd {nsdecls("w")} w:fill="{color_hex}"/>'
+            cell._tc.get_or_add_tcPr().append(parse_xml(shd_xml))
+
+        for cell in hdr_cells:
+            set_cell_background(cell, "0F172A")
+            for paragraph in cell.paragraphs:
+                for run_cell in paragraph.runs:
+                    run_cell.font.bold = True
+                    run_cell.font.color.rgb = RGBColor(255, 255, 255)
+
+        for item in results:
+            if task.status == "cancelled":
+                return
+            row_cells = table.add_row().cells
+            row_cells[0].text = str(item['task_name'])
+            row_cells[1].text = f"{item['ttft_ms']:.1f} ms"
+            row_cells[2].text = f"{item['tps']:.2f} t/s"
+            row_cells[3].text = f"{item['avg_gpu_w']:.1f} W"
+            row_cells[4].text = f"{item['tokens_per_joule']:.3f} t/J"
+            row_cells[5].text = str(item['judge_score'])
+
+            try:
+                score_num = float(item['judge_score'])
+                if score_num >= 8.0:
+                    set_cell_background(row_cells[5], "D1FAE5")
+                elif score_num <= 4.0:
+                    set_cell_background(row_cells[5], "FEE2E2")
+            except:
+                pass
+
+        doc.add_heading("4. 상세 답변 및 판정 의견", level=2)
+        for idx, item in enumerate(results):
+            if task.status == "cancelled":
+                return
+            doc.add_heading(f"태스크 {idx+1}: {item['task_name']}", level=3)
+            doc.add_paragraph(f"질문(Prompt): {item['prompt_text']}")
+            
+            resp_p = doc.add_paragraph()
+            resp_p.add_run("답변(Response):\n").bold = True
+            resp_p.add_run(item['response_text'])
+            resp_p.style = 'Quote'
+            
+            reason_p = doc.add_paragraph()
+            reason_p.add_run("판정 의견(Rationale):\n").bold = True
+            reason_p.add_run(item['judge_reason'])
+
+        if task.status == "cancelled":
+            return
+
+        import tempfile
+        temp = tempfile.NamedTemporaryFile(delete=False, suffix=".docx")
+        doc.save(temp.name)
+        temp.close()
+
+        with self.lock:
+            task.status = "completed"
+            task.message = "완료"
+            task.file_path = temp.name
+            sanitized_model = "".join([c if c.isalnum() or c in ("-", "_") else "_" for c in run['model_name']])
+            task.filename = f"AMEVA_Performance_Report_{sanitized_model}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx"
+
+doc_queue_manager = DocExportQueueManager()
+
 @router.post("/api/reports/export/word")
 def export_word(req: ExportWordRequest):
+    # Keep synchronous implementation for compatibility
     conn = get_db_connection()
     cursor = conn.cursor()
-    
-    # 1. 런 메타데이터 획득
     cursor.execute("SELECT * FROM benchmark_runs WHERE id = ?;", (req.run_id,))
     run_row = cursor.fetchone()
     if not run_row:
         conn.close()
         raise HTTPException(status_code=404, detail="Run not found")
     run = dict(run_row)
-    
-    # 2. 결과 획득
     cursor.execute("SELECT * FROM benchmark_results WHERE run_id = ?;", (req.run_id,))
     results = [dict(r) for r in cursor.fetchall()]
     conn.close()
 
     if not results:
-        raise HTTPException(status_code=400, detail="No benchmark results associated with this run")
+        raise HTTPException(status_code=400, detail="No results found")
 
-    # 3. LLM 요약 가동 여부
     summary_text = "요약을 비활성화했습니다."
     if req.use_llm_summary:
         judge_model = run.get("judge_model", state.config_data["default_judge_model"])
         broadcaster.log(f"📝 보고서 분석용 요약 요청 시작: {judge_model}", "sys")
-        
-        # 프롬프트 생성
         prompt_data = (
             "아래 하네스 벤치마크 결과를 요약 분석하여, 해당 AI 엣지 디바이스 구동환경에서의 모델의 "
             "추론 속도, 지능 지표, 전력 효율성 측면의 강점과 한계점을 5줄 내외의 격식 있고 일목요연한 "
@@ -1173,14 +1468,13 @@ def export_word(req: ExportWordRequest):
             prompt_data += f"- {r['task_name']} ({r['category']}): TTFT={r['ttft_ms']}ms, TPS={r['tps']}t/s, 전력={r['avg_gpu_w']}W, 점수={r['judge_score']}/10\n"
 
         try:
-            # Ollama를 통해 요약 텍스트 추출 (Temperature 0.2로 격식 있고 정보적인 글 생성 유도)
+            from core.ollama_client import OllamaClient
             messages = [
                 {"role": "system", "content": "You are a professional IT technology reporting assistant. Answer in precise Korean."},
                 {"role": "user", "content": prompt_data}
             ]
             resp = OllamaClient.chat_stream(judge_model, messages, options={"temperature": 0.2})
             resp.raise_for_status()
-            
             full_summary = ""
             for line in resp.iter_lines():
                 if line:
@@ -1193,24 +1487,25 @@ def export_word(req: ExportWordRequest):
             summary_text = f"요약 실패 (에러: {e})"
             broadcaster.log(f"❌ 보고서 요약 실패: {e}", "sys")
 
-    # 4. Word 문서 빌드 (python-docx 활용)
+    from docx import Document
+    from docx.shared import Pt, RGBColor, Inches
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.oxml import parse_xml
+    from docx.oxml.ns import nsdecls
+
     doc = Document()
-    
-    # 기본 스타일 적용
     style = doc.styles['Normal']
     font = style.font
     font.name = '맑은 고딕'
     font.size = Pt(11)
 
-    # 4.1. 타이틀 추가
     title_p = doc.add_paragraph()
     title_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     title_run = title_p.add_run("AMEVA AI 엣지 벤치마크 성능 평가 결과 보고서")
     title_run.font.size = Pt(20)
     title_run.font.bold = True
-    title_run.font.color.rgb = RGBColor(15, 23, 42) # Dark Slate Color
+    title_run.font.color.rgb = RGBColor(15, 23, 42)
 
-    # 4.2. 기본 구동 사양 요약 정보
     doc.add_paragraph(f"보고서 생성일시: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
     doc.add_heading("1. 구동 환경 사양 및 모델 요약", level=2)
@@ -1221,7 +1516,6 @@ def export_word(req: ExportWordRequest):
     meta_p.add_run(f"• 튜닝 파라미터: Threads={run['threads']} | n_ctx={run['n_ctx']} | Temp={run['temperature']}\n")
     meta_p.add_run(f"• 평가에 사용된 판정관: {run['judge_model']}")
 
-    # 4.3. AI 종합 보고 요약문 (Executive Summary)
     doc.add_heading("2. Executive Summary (AI 종합 분석 요약)", level=2)
     summary_box = doc.add_paragraph()
     summary_box.paragraph_format.left_indent = Inches(0.2)
@@ -1230,10 +1524,8 @@ def export_word(req: ExportWordRequest):
     run_sum.italic = True
     run_sum.font.size = Pt(10.5)
 
-    # 4.4. 개별 하네스 측정 지표 테이블 추가
     doc.add_heading("3. 태스크별 세부 측정 데이터", level=2)
     
-    # 테이블 칼럼 헤더: Task ID, TTFT, TPS, Power, Efficiency, Score
     table = doc.add_table(rows=1, cols=6)
     table.style = 'Light Shading Accent 1'
     hdr_cells = table.rows[0].cells
@@ -1244,14 +1536,12 @@ def export_word(req: ExportWordRequest):
     hdr_cells[4].text = '전성비(t/J)'
     hdr_cells[5].text = '판정점수'
 
-    # 셀 쉐이딩 함수 정의
     def set_cell_background(cell, color_hex):
-        shading_xml = f'<w:shd {nsdecls("w")} w:fill="{color_hex}"/>'
-        cell._tc.get_or_add_tcPr().append(parse_xml(shading_xml))
+        shd_xml = f'<w:shd {nsdecls("w")} w:fill="{color_hex}"/>'
+        cell._tc.get_or_add_tcPr().append(parse_xml(shd_xml))
 
-    # 헤더 쉐이딩
     for cell in hdr_cells:
-        set_cell_background(cell, "0F172A") # Dark Slate
+        set_cell_background(cell, "0F172A")
         for paragraph in cell.paragraphs:
             for run_cell in paragraph.runs:
                 run_cell.font.bold = True
@@ -1266,32 +1556,27 @@ def export_word(req: ExportWordRequest):
         row_cells[4].text = f"{item['tokens_per_joule']:.3f} t/J"
         row_cells[5].text = str(item['judge_score'])
 
-        # 결과 점수 강조
         try:
             score_num = float(item['judge_score'])
             if score_num >= 8.0:
-                set_cell_background(row_cells[5], "D1FAE5") # Light Emerald Accent
+                set_cell_background(row_cells[5], "D1FAE5")
             elif score_num <= 4.0:
-                set_cell_background(row_cells[5], "FEE2E2") # Light Red Accent
+                set_cell_background(row_cells[5], "FEE2E2")
         except:
             pass
 
-    # 4.5. 모델 답변 전문 첨부
     doc.add_heading("4. 상세 답변 및 판정 의견", level=2)
     for idx, item in enumerate(results):
         doc.add_heading(f"태스크 {idx+1}: {item['task_name']}", level=3)
         doc.add_paragraph(f"질문(Prompt): {item['prompt_text']}")
-        
         resp_p = doc.add_paragraph()
         resp_p.add_run("답변(Response):\n").bold = True
         resp_p.add_run(item['response_text'])
         resp_p.style = 'Quote'
-        
         reason_p = doc.add_paragraph()
         reason_p.add_run("판정 의견(Rationale):\n").bold = True
         reason_p.add_run(item['judge_reason'])
 
-    # 파일 저장
     temp = tempfile.NamedTemporaryFile(delete=False, suffix=".docx")
     doc.save(temp.name)
     temp.close()
@@ -1300,4 +1585,44 @@ def export_word(req: ExportWordRequest):
         temp.name,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         filename=f"AMEVA_Performance_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx"
+    )
+
+@router.post("/api/reports/export/word/queue")
+def export_word_queue(req: ExportWordRequest):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT model_name FROM benchmark_runs WHERE id = ?;", (req.run_id,))
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(status_code=404, detail="Run not found")
+    model_name = row["model_name"]
+    
+    task_id = doc_queue_manager.add_task(req.run_id, model_name, req.use_llm_summary)
+    return {"task_id": task_id, "status": "pending"}
+
+@router.get("/api/reports/export/word/queue")
+def get_word_queue():
+    return doc_queue_manager.get_all_tasks()
+
+@router.delete("/api/reports/export/word/queue/{task_id}")
+def cancel_or_remove_word_task(task_id: str):
+    cancelled = doc_queue_manager.cancel_task(task_id)
+    removed = doc_queue_manager.remove_task(task_id)
+    return {"task_id": task_id, "cancelled": cancelled, "removed": removed}
+
+@router.get("/api/reports/export/word/download/{task_id}")
+def download_word_file(task_id: str):
+    task = doc_queue_manager.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if task.status != "completed":
+        raise HTTPException(status_code=400, detail=f"Task is in status '{task.status}', not ready for download")
+    if not task.file_path or not os.path.exists(task.file_path):
+        raise HTTPException(status_code=404, detail="Generated file not found on disk")
+        
+    return FileResponse(
+        task.file_path,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        filename=task.filename
     )
