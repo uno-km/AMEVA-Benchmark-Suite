@@ -5,6 +5,7 @@ let currentActiveModel = null;
 let currentActiveEngine = 'OLM';
 let telemetryWs = null;
 let logsWs = null;
+let currentDetailedResults = [];
 
 // Local Harness state
 let harnessTasks = [];
@@ -127,7 +128,14 @@ function handleIncomingLog(packet) {
         }
         const line = document.createElement('div');
         line.className = 'log-line';
-        if (type === 'bench') line.style.color = 'var(--accent)';
+        if (type === 'bench') {
+            if (lineText.includes("====== ###")) {
+                line.style.color = '#ff9800'; // Orange
+                line.style.fontWeight = 'bold';
+            } else {
+                line.style.color = 'var(--accent)';
+            }
+        }
         line.textContent = lineText;
         viewport.appendChild(line);
     });
@@ -425,15 +433,20 @@ async function checkSessionStatus() {
         }
 
         const runBtn = document.getElementById('btn-run');
-        if (data.benchmark_running || data.chat_running) {
-            runBtn.disabled = true;
-            runBtn.innerText = "⏳ RUNNING TASK...";
+        if (data.boot_status === 'ONLINE') {
+            if (data.benchmark_running || data.chat_running) {
+                runBtn.disabled = true;
+                runBtn.innerText = "⏳ RUNNING TASK...";
+            } else {
+                runBtn.disabled = false;
+                runBtn.innerText = "⚡ RUN BENCHMARK";
+            }
         } else if (data.boot_status === 'BOOTING') {
             runBtn.disabled = true;
             runBtn.innerText = "⏳ 커널 가동 중...";
         } else {
-            runBtn.disabled = false;
-            runBtn.innerText = "⚡ RUN BENCHMARK";
+            runBtn.disabled = true;
+            runBtn.innerText = "⚡ RUN BENCHMARK (커널 가동 필요)";
         }
     } catch (e) {
         console.error("Status check failed", e);
@@ -1071,8 +1084,9 @@ async function viewReportDetail(runId) {
         
         const tbody = document.getElementById('detail-results-tbody');
         tbody.innerHTML = "";
+        currentDetailedResults = results;
         
-        results.forEach(res => {
+        results.forEach((res, index) => {
             const tr = document.createElement('tr');
             
             // 특수한 점수(PASS/FAIL) 색상 표시
@@ -1085,11 +1099,6 @@ async function viewReportDetail(runId) {
                 else if (s <= 4) scoreColor = "var(--danger)";
             }
 
-            // 인라인으로 상세 프롬프트/답변을 모달 전달하기 위한 이스케이프 처리
-            const promptEscaped = escapeHtml(res.prompt_text);
-            const responseEscaped = escapeHtml(res.response_text);
-            const reasonEscaped = escapeHtml(res.judge_reason);
-
             tr.innerHTML = `
                 <td style="font-weight:700;">${res.task_name}</td>
                 <td>${res.category}</td>
@@ -1098,7 +1107,7 @@ async function viewReportDetail(runId) {
                 <td>${res.avg_gpu_w.toFixed(1)} W</td>
                 <td style="font-weight:700; color:${scoreColor};">${res.judge_score}</td>
                 <td>
-                    <button class="btn" style="padding:2px 6px; font-size:11px;" onclick="showTaskDetail(\`${promptEscaped}\`, \`${responseEscaped}\`, \`${reasonEscaped}\`)">👁️ 검사</button>
+                    <button class="btn" style="padding:2px 6px; font-size:11px;" onclick="showTaskDetail(${index})">👁️ 검사</button>
                 </td>
             `;
             tbody.appendChild(tr);
@@ -1110,14 +1119,18 @@ async function viewReportDetail(runId) {
         
         document.getElementById('modal-report-detail').classList.add('active');
     } catch(e) {
+        console.error(e);
         alert("상세 데이터를 가져오지 못했습니다.");
     }
 }
 
-function showTaskDetail(prompt, response, reason) {
-    document.getElementById('task-detail-prompt').innerText = unescapeHtml(prompt);
-    document.getElementById('task-detail-response').innerText = unescapeHtml(response);
-    document.getElementById('task-detail-reason').innerText = unescapeHtml(reason);
+function showTaskDetail(index) {
+    const res = currentDetailedResults[index];
+    if (!res) return;
+    
+    document.getElementById('task-detail-prompt').innerText = res.prompt_text || "";
+    document.getElementById('task-detail-response').innerText = res.response_text || "";
+    document.getElementById('task-detail-reason').innerText = res.judge_reason || "";
     
     document.getElementById('modal-task-detail').classList.add('active');
 }

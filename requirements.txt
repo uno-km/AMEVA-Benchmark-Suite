@@ -19,3 +19,4 @@ psutil
 GPUtil
 pydantic>=2.0
 python-docx>=1.0.0
+openpyxl>=3.1.0

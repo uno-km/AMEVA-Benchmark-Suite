@@ -466,13 +466,21 @@ def _run_inference_mode(req: RunBenchmarkRequest):
     has_nv = specs.has_nvidia
 
     for idx, task in enumerate(dataset):
-        broadcaster.log(f"─── Task [{idx+1}/{len(dataset)}]: {task.get('task_id','?')} ───", "bench")
+        task_id = task.get('task_id', '?')
+        eval_type = task.get('eval_type', 'llm_judge')
+        raw_prompt = task.get('prompt', 'Hello')
+
+        broadcaster.log(f"====== ### [Task {idx+1}/{len(dataset)}] {task_id} ======", "bench")
+        broadcaster.log(f"====== ### EVAL TYPE: {eval_type}", "bench")
+        broadcaster.log(f"====== ### QUESTION: {raw_prompt}", "bench")
+        broadcaster.log(f"[STATUS] Running inference on {model_name}...", "bench")
+
         # task_id가 카테고리를 암시
         cat_name = "General"
-        if "-" in task.get("task_id", ""):
-            cat_name = task.get("task_id").split("-")[0]
+        if "-" in task_id:
+            cat_name = task_id.split("-")[0]
             
-        broadcaster.log(f"\n[INFO] AI가 '{task.get('task_id')}' 문제를 분석 중입니다... (TTFT 측정 중)\n", "chunk")
+        broadcaster.log(f"\n[INFO] AI가 '{task_id}' 문제를 분석 중입니다... (TTFT 측정 중)\n", "chunk")
 
         pw_tracker = PowerTracker(has_nvidia=has_nv)
         if "Efficiency" in req.run_mode:
