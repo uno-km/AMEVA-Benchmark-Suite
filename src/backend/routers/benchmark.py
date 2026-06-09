@@ -3,58 +3,37 @@ import csv
 import time
 import re
 import json
+import sqlite3
+import tempfile
 import threading
 import psutil
 import subprocess
 import requests
+import pandas as pd
 from typing import List, Dict, Any
 from datetime import datetime
 from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
+
+from docx import Document
+from docx.shared import Pt, RGBColor, Inches
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml import parse_xml
+from docx.oxml.ns import nsdecls
 
 from core.constants import OLLAMA_BASE_URL, LLAMA_CPP_HOST, LLAMA_CPP_PORT
 from core.judge_service import JudgeService
 from core.prompt_utils import PromptFactory, get_stop_tokens
-from backend.state import state
+from backend.state import state, CONFIG_PATH
 from backend.routers.logs import broadcaster
+from backend.database import get_db_connection
 
 router = APIRouter()
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Harness Default & Schemas
+# Schemas
 # ─────────────────────────────────────────────────────────────────────────────
-
-HARNESS_FILE = "harness_v4.csv"
-
-DEFAULT_HARNESS = [
-    {"task": "K-Math-Basic",        "prompt": "영희는 사과 12개, 철수는 영희의 절반보다 2개 더 많고, 민수는 철수보다 3개 적어. 총 합계는?",   "expected_regex": r"\b23\b",                              "eval_type": "regex"},
-    {"task": "K-Logic-Intermediate","prompt": "A가 B보다 3살 많고, B는 C보다 2살 어리다. C가 10살이면 A는 몇 살인가?",                          "expected_regex": r"\b11\b",                              "eval_type": "regex"},
-    {"task": "K-Grammar",           "prompt": "'나 어제 밥 먹다가 이빨 빠졌어'를 비즈니스 극존칭으로 바꿔.",                                    "expected_regex": "",                                     "eval_type": "llm_judge"},
-    {"task": "K-Coding",            "prompt": "리스트에서 짝수만 골라 제곱 후 내림차순 정렬하는 파이썬 함수를 짜줘.",                            "expected_regex": "",                                     "eval_type": "llm_judge"},
-    {"task": "K-Reasoning",         "prompt": "철수는 매일 아침 7시에 출근하고, 지하철로 30분 걸린다. 8시에 회의가 시작되면 몇 시까지 집에서 출발해야 할까?", "expected_regex": "",                              "eval_type": "llm_judge"},
-    {"task": "K-Hallucination",     "prompt": "세종대왕의 맥북 던짐 사건에 대해 자세히 설명해줘.",                                              "expected_regex": r"\b(없습니다|사실이|허구|데이터가)\b", "eval_type": "regex"},
-    {"task": "K-Context",           "prompt": "오늘은 비가 와서 우산을 챙겼다. 그런데 우산을 깜빡하고 집에 두고 왔다. 다음 행동을 추천해줘.",    "expected_regex": "",                                     "eval_type": "llm_judge"},
-    {"task": "E-Math",              "prompt": "150 dollars with 20% discount and then 10% tax added. Final price?",                            "expected_regex": r"\b132\b",                             "eval_type": "regex"},
-    {"task": "E-Formal",            "prompt": "Rewrite 'I can't make it to the meeting' into a formal business email.",                        "expected_regex": "",                                     "eval_type": "llm_judge"},
-    {"task": "E-Logic",             "prompt": "I have 3 brothers. Each has one sister. How many sisters do I have?",                           "expected_regex": r"\b(?:1|one)\b",                       "eval_type": "regex"},
-    {"task": "E-Coding",            "prompt": "Write a Python function that returns the Fibonacci sequence up to n.",                          "expected_regex": "",                                     "eval_type": "llm_judge"},
-    {"task": "E-CommonSense",       "prompt": "If you spill water on your laptop keyboard, what should you do first?",                        "expected_regex": "",                                     "eval_type": "llm_judge"},
-    {"task": "K-E-Mixed",           "prompt": "'The deadline has been moved up to tomorrow'를 한글로 번역하고, 기한이 '당겨졌는지' 혹은 '미뤄졌는지' 판단해서 한글로 답한 뒤, 마감일을 뜻하는 영어 단어를 써줘.", "expected_regex": "", "eval_type": "llm_judge"},
-    {"task": "Bilingual-Reasoning", "prompt": "Please explain in Korean why '프로젝트가 연기되었습니다' means the deadline was delayed, not advanced.", "expected_regex": "",                              "eval_type": "llm_judge"},
-    {"task": "Bilingual-Logic",     "prompt": "If today is 월요일 and the event moved to Friday, write one sentence in Korean and one in English describing the new schedule.", "expected_regex": "", "eval_type": "llm_judge"},
-]
-DEFAULT_HARNESS_FIELDS = ["task", "prompt", "expected_regex", "eval_type"]
-
-def ensure_default_harness():
-    if not os.path.exists(HARNESS_FILE):
-        try:
-            with open(HARNESS_FILE, 'w', newline='', encoding='utf-8-sig') as f:
-                writer = csv.DictWriter(f, fieldnames=DEFAULT_HARNESS_FIELDS)
-                writer.writeheader()
-                for row in DEFAULT_HARNESS:
-                    writer.writerow(row)
-        except Exception as e:
-            print(f"Error creating default harness: {e}")
 
 class BootConfigSchema(BaseModel):
     engine: str = "OLM"
@@ -85,10 +64,30 @@ class ChatRequest(BaseModel):
     stress_config: StressOptionsSchema
 
 class TaskSchema(BaseModel):
-    task: str
+    task_id: str
     prompt: str
     expected_regex: str = ""
     eval_type: str = "llm_judge"
+
+class ExportWordRequest(BaseModel):
+    run_id: int
+    use_llm_summary: bool = True
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Config API
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/api/config")
+def get_config_endpoint():
+    return state.config_data
+
+@router.post("/api/config")
+def update_config_endpoint(updates: dict):
+    state.save_config(updates)
+    # config.json 저장에 맞춰 state 변수 동기화
+    if "default_judge_model" in updates:
+        state.stress_config.judge_model = updates["default_judge_model"]
+    return {"status": "saved", "config": state.config_data}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Power Tracker (Threaded)
@@ -154,7 +153,6 @@ def boot_worker(config_dict: dict):
     state.boot_status = "BOOTING"
     state.boot_message = "BOOTING..."
     
-    # MatrixEngine의 로거 바인딩
     state.engine.set_logger(lambda msg: broadcaster.log(f"{_ts()} {msg}", "sys"))
     
     success, msg = state.engine.boot_matrix(config_dict)
@@ -164,6 +162,14 @@ def boot_worker(config_dict: dict):
         state.boot_message = msg
         state.last_booted_model = config_dict.get("model_name", "")
         broadcaster.log(f"✅ 부팅 완료: {msg}", "sys")
+        
+        # 마지막 성공 세션 캐시 설정 저장
+        state.save_config({
+            "last_used_engine": config_dict.get("engine", "OLM"),
+            "last_used_cores": config_dict.get("cpu_cores", 2.0),
+            "last_used_ram": config_dict.get("ram_mb", 4096),
+            "last_used_gpu_layers": config_dict.get("gpu_layers", 0)
+        })
     else:
         state.boot_status = "ERROR"
         state.boot_message = f"부팅 실패: {msg}"
@@ -196,7 +202,6 @@ def boot_session(req: BootConfigSchema):
         "model_name": req.model_name
     }
     
-    # 동기화 처리
     state.boot_config = req
     state.session.boot_config = req
     
@@ -219,39 +224,112 @@ def shutdown_session():
     
     return {"status": "shutdown_done"}
 
-# ── Harness CRUD ──
+# ── Harness CRUD (SQLite 연동) ──
 
 @router.get("/api/harness")
 def get_harness():
-    ensure_default_harness()
-    data = []
-    try:
-        with open(HARNESS_FILE, 'r', encoding='utf-8-sig') as f:
-            reader = csv.DictReader(f)
-            data = list(reader)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to read harness: {e}")
-    return data
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT task_id, prompt, expected_regex, eval_type FROM harness_tasks;")
+    rows = cursor.fetchall()
+    conn.close()
+    
+    # 만약 비어있다면 기초 마이그레이션 확인
+    if not rows:
+        from backend.database import db_init
+        db_init()
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT task_id, prompt, expected_regex, eval_type FROM harness_tasks;")
+        rows = cursor.fetchall()
+        conn.close()
+        
+    return [dict(r) for r in rows]
 
 @router.post("/api/harness")
 def save_harness(tasks: List[TaskSchema]):
+    conn = get_db_connection()
+    cursor = conn.cursor()
     try:
-        with open(HARNESS_FILE, 'w', newline='', encoding='utf-8-sig') as f:
-            writer = csv.DictWriter(f, fieldnames=DEFAULT_HARNESS_FIELDS)
-            writer.writeheader()
-            for t in tasks:
-                writer.writerow(t.dict())
+        # 데이터 클리어 후 재삽입
+        cursor.execute("DELETE FROM harness_tasks;")
+        for t in tasks:
+            cursor.execute("""
+            INSERT INTO harness_tasks (task_id, prompt, expected_regex, eval_type)
+            VALUES (?, ?, ?, ?);
+            """, (t.task_id, t.prompt, t.expected_regex, t.eval_type))
+        conn.commit()
         return {"status": "saved", "count": len(tasks)}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to write harness: {e}")
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to write harness tasks: {e}")
+    finally:
+        conn.close()
 
 # ── Reports ──
 
 @router.get("/api/reports")
 def get_reports(n: int = 50):
-    return state.db.get_last_n(n)
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    # 개별 태스크 평균 점수 및 TPS를 포함한 런 리스트 쿼리
+    cursor.execute("""
+    SELECT r.id, r.timestamp, r.model_name, r.engine_type, r.run_mode, 
+           r.cpu_cores, r.ram_mb, r.gpu_layers, r.threads, r.n_ctx, r.judge_model,
+           COUNT(s.id) as task_count,
+           AVG(CASE WHEN s.judge_score NOT IN ('PASS (Regex)', 'FAIL (Regex)', 'N/A') THEN CAST(s.judge_score AS REAL) ELSE NULL END) as avg_score,
+           AVG(s.tps) as avg_tps,
+           AVG(s.ttft_ms) as avg_ttft,
+           AVG(s.avg_gpu_w) as avg_power
+    FROM benchmark_runs r
+    LEFT JOIN benchmark_results s ON r.id = s.run_id
+    GROUP BY r.id
+    ORDER BY r.id DESC
+    LIMIT ?;
+    """, (n,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
-# ── Execution Logic ──
+@router.get("/api/reports/{run_id}")
+def get_report_detail(run_id: int):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # 1. 런 메타데이터
+    cursor.execute("SELECT * FROM benchmark_runs WHERE id = ?;", (run_id,))
+    run_row = cursor.fetchone()
+    if not run_row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Benchmark run not found")
+        
+    # 2. 개별 상세 결과
+    cursor.execute("SELECT * FROM benchmark_results WHERE run_id = ?;", (run_id,))
+    result_rows = cursor.fetchall()
+    conn.close()
+    
+    return {
+        "run": dict(run_row),
+        "results": [dict(r) for r in result_rows]
+    }
+
+@router.delete("/api/reports/{run_id}")
+def delete_report(run_id: int):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("DELETE FROM benchmark_runs WHERE id = ?;", (run_id,))
+        conn.commit()
+        return {"status": "deleted"}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Execution Workers
+# ─────────────────────────────────────────────────────────────────────────────
 
 def run_benchmark_worker(req: RunBenchmarkRequest):
     state.active_benchmark_running = True
@@ -261,7 +339,6 @@ def run_benchmark_worker(req: RunBenchmarkRequest):
         # 1. Smart SWAP 체크
         if state.last_booted_model != req.boot_config.model_name:
             broadcaster.log(f"🔄 스왑 필요 감지: {state.last_booted_model} -> {req.boot_config.model_name}", "sys")
-            # 스왑을 위해 동기적으로 부팅 실행
             config_dict = {
                 "engine": req.boot_config.engine,
                 "cpu_cores": req.boot_config.cpu_cores,
@@ -316,23 +393,42 @@ def _run_stress_mode(req: RunBenchmarkRequest):
         broadcaster.log("[에러] 스트레스 테스트에서 데이터를 반환하지 못했습니다.", "sys")
         return
 
-    for item in bench_data:
-        results.append({
-            "Model_Hash":             item.get('model_filename', req.boot_config.model_name),
-            "Quant_Method":           "N/A",
-            "Context_Size":           item.get('n_ctx'),
-            "Thread_Config":          item.get('n_threads'),
-            "Prompt_Text":            "N/A",
-            "Prompt_Response":        "N/A",
-            "System_Load":            "STRESS",
-            "Warm/Cold_Tag":          "STRESS",
-            "Sampling_Time (ms)":     0,
-            "Judge_Score":            "N/A",
-            "Metric_Source (bench/srv)": "bench"
-        })
+    # 데이터베이스 삽입
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+        INSERT INTO benchmark_runs (
+            timestamp, model_name, engine_type, run_mode, cpu_cores, ram_mb, gpu_layers, 
+            threads, n_ctx, temperature, repeat_penalty, system_prompt, judge_model
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        """, (
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"), req.boot_config.model_name, req.boot_config.engine,
+            req.run_mode, req.boot_config.cpu_cores, req.boot_config.ram_mb, req.boot_config.gpu_layers,
+            req.stress_config.threads, req.stress_config.n_ctx, req.stress_config.temperature,
+            req.stress_config.repeat_penalty, req.stress_config.system_prompt, req.stress_config.judge_model
+        ))
+        run_id = cursor.lastrowid
 
-    state.db.insert_batch(results)
-    broadcaster.log(f"📊 {len(results)}건 결과가 저장되었습니다.", "sys")
+        for item in bench_data:
+            cursor.execute("""
+            INSERT INTO benchmark_results (
+                run_id, task_name, category, prompt_text, response_text, ttft_ms, 
+                prompt_eval_ms_t, avg_gpu_w, tokens_per_joule, e2e_latency_sec, tps, 
+                peak_vram_mb, system_load, warm_cold_tag, sampling_time_ms, judge_score, judge_reason
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            """, (
+                run_id, "Llama-Bench", "STRESS", "N/A", "N/A", 0.0, 0.0, avg_watts,
+                round(item.get('t/s', 0)/avg_watts, 3) if avg_watts > 0 else 0,
+                0.0, round(item.get('t/s', 0), 2), 0.0, "STRESS", "STRESS", 0.0, "N/A", "N/A"
+            ))
+        conn.commit()
+        broadcaster.log(f"📊 {len(bench_data)}건 스트레스 결과가 SQLite DB에 저장되었습니다.", "sys")
+    except Exception as e:
+        conn.rollback()
+        broadcaster.log(f"❌ DB 저장 에러: {e}", "sys")
+    finally:
+        conn.close()
     
     # 자원 반납
     state.engine.shutdown()
@@ -342,11 +438,16 @@ def _run_stress_mode(req: RunBenchmarkRequest):
     broadcaster.log("✓ 벤치마크 완료 및 엔진 종료.", "sys")
 
 def _run_inference_mode(req: RunBenchmarkRequest):
-    ensure_default_harness()
-    dataset = []
-    with open(HARNESS_FILE, 'r', encoding='utf-8-sig') as f:
-        reader = csv.DictReader(f)
-        dataset = list(reader)
+    # 하네스 데이터 로드
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT task_id, prompt, expected_regex, eval_type FROM harness_tasks;")
+    dataset = [dict(r) for r in cursor.fetchall()]
+    conn.close()
+
+    if not dataset:
+        broadcaster.log("[에러] 하네스 태스크가 존재하지 않습니다. 먼저 하네스 매니저에서 추가해 주세요.", "sys")
+        return
 
     broadcaster.log(f"추론 모드 시작 – 하네스 태스크 {len(dataset)}개", "sys")
     results = []
@@ -365,9 +466,13 @@ def _run_inference_mode(req: RunBenchmarkRequest):
     has_nv = specs.has_nvidia
 
     for idx, task in enumerate(dataset):
-        broadcaster.log(f"─── Task [{idx+1}/{len(dataset)}]: {task.get('task','?')} ───", "sys")
-        cat_name = task.get('category', 'General')
-        broadcaster.log(f"\n[INFO] AI가 '{cat_name}' 문제를 분석 중입니다... (TTFT 측정 중)\n", "chunk")
+        broadcaster.log(f"─── Task [{idx+1}/{len(dataset)}]: {task.get('task_id','?')} ───", "sys")
+        # task_id가 카테고리를 암시
+        cat_name = "General"
+        if "-" in task.get("task_id", ""):
+            cat_name = task.get("task_id").split("-")[0]
+            
+        broadcaster.log(f"\n[INFO] AI가 '{task.get('task_id')}' 문제를 분석 중입니다... (TTFT 측정 중)\n", "chunk")
 
         pw_tracker = PowerTracker(has_nvidia=has_nv)
         if "Efficiency" in req.run_mode:
@@ -415,7 +520,6 @@ def _run_inference_mode(req: RunBenchmarkRequest):
 
         try:
             if engine_type == "BIT":
-                # Bitnet CLI 추론 호출
                 if state.engine.container:
                     from core.models_data import get_filename_by_id
                     model_file = get_filename_by_id(model_name)
@@ -492,32 +596,26 @@ def _run_inference_mode(req: RunBenchmarkRequest):
         tps_val = round(tok_count / duration, 2) if duration > 0 else 0
 
         broadcaster.log(f"Task 완료 | TPS: {tps_val} | TTFT: {ttft:.1f}ms | {avg_watts:.1f}W", "sys")
-        broadcaster.log(f"✓ [{cat_name}] {task.get('task','?')}  |  Judge: {score}  |  {duration:.2f}s  |  {tps_val} t/s", "sys")
+        broadcaster.log(f"✓ [{cat_name}] {task.get('task_id','?')}  |  Judge: {score}  |  {duration:.2f}s  |  {tps_val} t/s", "sys")
 
         results.append({
-            "Model_Hash":         model_name,
-            "Benchmark_Category": task.get('category', 'General'),
-            "Quant_Method":       "N/A",
-            "Context_Size":       req.stress_config.n_ctx,
-            "Thread_Config":      req.stress_config.threads,
-            "Prompt_Text":        task.get('prompt', ''),
-            "Prompt_Response":    text_acc,
-            "TTFT (ms)":          round(ttft, 1),
-            "Prompt_Eval (ms/t)": prompt_ms_per_t,
-            "Avg_GPU_W":          round(avg_watts, 2),
-            "Tokens_per_Joule":   round(tps_val / avg_watts, 3) if avg_watts > 0 else 0,
-            "E2E_Latency":        round(duration, 2),
-            "Generation (t/s)":   tps_val,
-            "Peak_VRAM_MB":       0,
-            "System_Load":        "INFERENCE",
-            "Warm/Cold_Tag":      "WARM",
-            "Sampling_Time (ms)": round(sample_ms, 2),
-            "Judge_Score":        score,
-            "Judge_Reason":       "N/A",
-            "Metric_Source (bench/srv)": "srv",
-            "eval_type":          eval_type,
-            "prompt":             task.get('prompt', ''),
-            "response":           text_acc
+            "task_name":         task.get("task_id"),
+            "category":          cat_name,
+            "prompt_text":        task.get('prompt', ''),
+            "response_text":    text_acc,
+            "ttft_ms":          round(ttft, 1),
+            "prompt_eval_ms_t": prompt_ms_per_t,
+            "avg_gpu_w":          round(avg_watts, 2),
+            "tokens_per_joule":   round(tps_val / avg_watts, 3) if avg_watts > 0 else 0,
+            "e2e_latency_sec":        round(duration, 2),
+            "tps":   tps_val,
+            "peak_vram_mb":       0,
+            "system_load":        "INFERENCE",
+            "warm_cold_tag":      "WARM",
+            "sampling_time_ms": round(sample_ms, 2),
+            "judge_score":        score,
+            "judge_reason":       "N/A",
+            "eval_type":          eval_type
         })
 
     broadcaster.log("✓ 벤치마크 추론 시퀀스 완료.", "sys")
@@ -537,15 +635,15 @@ def _run_inference_mode(req: RunBenchmarkRequest):
         for res in results:
             if res.get("eval_type") == "llm_judge":
                 score_data = JudgeService.call_llm_judge(
-                    res["prompt"], 
-                    res["response"], 
+                    res["prompt_text"], 
+                    res["response_text"], 
                     req.stress_config,
                     chunk_callback=lambda tok: broadcaster.log(tok, "chunk")
                 )
-                res["Judge_Score"]  = score_data.get("score", 0)
-                res["Judge_Reason"] = score_data.get("reason", "No reason provided.")
-                broadcaster.log(f"   └ [판정관 의견]: {res['Judge_Reason']}", "sys")
-                final_scores.append(res["Judge_Score"])
+                res["judge_score"]  = str(score_data.get("score", 0))
+                res["judge_reason"] = score_data.get("reason", "No reason provided.")
+                broadcaster.log(f"   └ [판정관 의견]: {res['judge_reason']}", "sys")
+                final_scores.append(score_data.get("score", 0))
     except Exception as e:
         broadcaster.log(f"❌ 판정 수행 중 오류: {e}", "sys")
 
@@ -559,18 +657,21 @@ def _run_inference_mode(req: RunBenchmarkRequest):
     
     cat_scores = {}
     for r in results:
-        cat = r.get("Benchmark_Category", "General")
-        score = r.get("Judge_Score", 0)
-        if cat not in cat_scores: cat_scores[cat] = []
-        cat_scores[cat].append(score)
+        cat = r.get("category", "General")
+        # 점수 정수로 파싱 시도
+        try:
+            val = float(r["judge_score"])
+            if cat not in cat_scores: cat_scores[cat] = []
+            cat_scores[cat].append(val)
+        except:
+            pass
         
     for cat, scores in cat_scores.items():
-        numeric_scores = [s for s in scores if isinstance(s, (int, float))]
-        if numeric_scores:
-            c_avg = sum(numeric_scores) / len(numeric_scores)
+        if scores:
+            c_avg = sum(scores) / len(scores)
             status_text = f"{c_avg:.2f}"
         else:
-            status_text = str(scores[0]) if scores else "N/A"
+            status_text = "N/A"
         broadcaster.log(f"{cat:<15} | {status_text:<10} | OK", "sys")
         
     broadcaster.log("-" * 50, "sys")
@@ -578,8 +679,42 @@ def _run_inference_mode(req: RunBenchmarkRequest):
     broadcaster.log("="*50, "sys")
 
     # DB 저장
-    state.db.insert_batch(results)
-    broadcaster.log("📊 결과 저장 완료 및 시퀀스 리셋.", "sys")
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+        INSERT INTO benchmark_runs (
+            timestamp, model_name, engine_type, run_mode, cpu_cores, ram_mb, gpu_layers, 
+            threads, n_ctx, temperature, repeat_penalty, system_prompt, judge_model
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        """, (
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"), model_name, engine_type,
+            req.run_mode, req.boot_config.cpu_cores, req.boot_config.ram_mb, req.boot_config.gpu_layers,
+            req.stress_config.threads, req.stress_config.n_ctx, req.stress_config.temperature,
+            req.stress_config.repeat_penalty, req.stress_config.system_prompt, req.stress_config.judge_model
+        ))
+        run_id = cursor.lastrowid
+        
+        for res in results:
+            cursor.execute("""
+            INSERT INTO benchmark_results (
+                run_id, task_name, category, prompt_text, response_text, ttft_ms, 
+                prompt_eval_ms_t, avg_gpu_w, tokens_per_joule, e2e_latency_sec, tps, 
+                peak_vram_mb, system_load, warm_cold_tag, sampling_time_ms, judge_score, judge_reason
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            """, (
+                run_id, res["task_name"], res["category"], res["prompt_text"], res["response_text"],
+                res["ttft_ms"], res["prompt_eval_ms_t"], res["avg_gpu_w"], res["tokens_per_joule"],
+                res["e2e_latency_sec"], res["tps"], res["peak_vram_mb"], "INFERENCE", "WARM",
+                res["sampling_time_ms"], res["judge_score"], res["judge_reason"]
+            ))
+        conn.commit()
+        broadcaster.log("📊 결과 저장 완료 및 시퀀스 리셋.", "sys")
+    except Exception as e:
+        conn.rollback()
+        broadcaster.log(f"❌ DB 저장 에러: {e}", "sys")
+    finally:
+        conn.close()
 
 @router.post("/api/benchmark/run")
 def run_benchmark(req: RunBenchmarkRequest, background_tasks: BackgroundTasks):
@@ -589,12 +724,11 @@ def run_benchmark(req: RunBenchmarkRequest, background_tasks: BackgroundTasks):
     background_tasks.add_task(run_benchmark_worker, req)
     return {"status": "started"}
 
-# ── Chat Logic ──
+# ── Chat Worker & Endpoint ──
 
 def run_chat_worker(req: ChatRequest):
     state.active_chat_running = True
     
-    session = req
     engine_type = req.boot_config.engine
     model_name = req.boot_config.model_name
     
@@ -603,7 +737,6 @@ def run_chat_worker(req: ChatRequest):
 
     broadcaster.log(f"[CHAT_MOD] 채팅 벤치마크 시작 – 모델: {model_name}", "sys")
     
-    # 스왑 필요성 체크
     if state.last_booted_model != model_name:
         broadcaster.log(f"🔄 스왑 필요 감지: {state.last_booted_model} -> {model_name}", "sys")
         config_dict = {
@@ -747,7 +880,7 @@ def run_chat_worker(req: ChatRequest):
         "Warm/Cold_Tag":       "CHAT",
         "Sampling_Time (ms)":  round(sample_ms, 2),
         "Judge_Score":         "N/A",
-        "Metric_Source (bench/srv)": "chat",
+        "Judge_Reason":        "N/A"
     }
 
     if req.stress_config.judge_model:
@@ -759,20 +892,50 @@ def run_chat_worker(req: ChatRequest):
                 req.stress_config,
                 chunk_callback=lambda tok: broadcaster.log(tok, "chunk")
             )
-            result["Judge_Score"] = score_data.get("score", 0)
+            result["Judge_Score"] = str(score_data.get("score", 0))
             result["Judge_Reason"] = score_data.get("reason", "")
             broadcaster.log(f"🏆 채팅 판정 완료: {result['Judge_Score']}/10", "sys")
         except Exception as e:
             broadcaster.log(f"❌ 판정관 호출 중 치명적 오류: {e}", "sys")
-            result["Judge_Score"] = 0
+            result["Judge_Score"] = "0"
             result["Judge_Reason"] = f"Error: {e}"
 
-    # CSV 즉시 삽입
+    # DB 저장
+    conn = get_db_connection()
+    cursor = conn.cursor()
     try:
-        state.db.insert_entry(result)
-        broadcaster.log("[CHAT_MOD] CSV 저장 완료.", "sys")
+        cursor.execute("""
+        INSERT INTO benchmark_runs (
+            timestamp, model_name, engine_type, run_mode, cpu_cores, ram_mb, gpu_layers, 
+            threads, n_ctx, temperature, repeat_penalty, system_prompt, judge_model
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        """, (
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"), model_name, engine_type,
+            "[CHAT_MOD]", req.boot_config.cpu_cores, req.boot_config.ram_mb, req.boot_config.gpu_layers,
+            req.stress_config.threads, req.stress_config.n_ctx, req.stress_config.temperature,
+            req.stress_config.repeat_penalty, req.stress_config.system_prompt, req.stress_config.judge_model
+        ))
+        run_id = cursor.lastrowid
+        
+        cursor.execute("""
+        INSERT INTO benchmark_results (
+            run_id, task_name, category, prompt_text, response_text, ttft_ms, 
+            prompt_eval_ms_t, avg_gpu_w, tokens_per_joule, e2e_latency_sec, tps, 
+            peak_vram_mb, system_load, warm_cold_tag, sampling_time_ms, judge_score, judge_reason
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        """, (
+            run_id, "Single Chat", "CHAT", result["Prompt_Text"], result["Prompt_Response"],
+            result["TTFT (ms)"], result["Prompt_Eval (ms/t)"], result["Avg_GPU_W"], result["Tokens_per_Joule"],
+            result["E2E_Latency"], result["Generation (t/s)"], result["Peak_VRAM_MB"], "CHAT", "CHAT",
+            result["Sampling_Time (ms)"], result["Judge_Score"], result["Judge_Reason"]
+        ))
+        conn.commit()
+        broadcaster.log("[CHAT_MOD] SQLite DB 저장 완료.", "sys")
     except Exception as e:
-        broadcaster.log(f"[CHAT_MOD] CSV 저장 실패: {e}", "sys")
+        conn.rollback()
+        broadcaster.log(f"[CHAT_MOD] SQLite 저장 실패: {e}", "sys")
+    finally:
+        conn.close()
 
     state.active_chat_running = False
 
@@ -783,3 +946,208 @@ def run_chat(req: ChatRequest, background_tasks: BackgroundTasks):
         
     background_tasks.add_task(run_chat_worker, req)
     return {"status": "started"}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# EXPORT EXCEL & WORD
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/api/reports/export/excel")
+def export_excel(run_id: int = 0):
+    conn = get_db_connection()
+    if run_id > 0:
+        query = "SELECT * FROM benchmark_results WHERE run_id = ?;"
+        df = pd.read_sql_query(query, conn, params=(run_id,))
+    else:
+        # 전체 조인 내역
+        query = """
+        SELECT r.timestamp, r.model_name, r.engine_type, r.run_mode,
+               s.task_name, s.category, s.prompt_text, s.response_text,
+               s.ttft_ms, s.tps, s.avg_gpu_w, s.tokens_per_joule, s.judge_score, s.judge_reason
+        FROM benchmark_runs r
+        LEFT JOIN benchmark_results s ON r.id = s.run_id;
+        """
+        df = pd.read_sql_query(query, conn)
+    conn.close()
+
+    if df.empty:
+        raise HTTPException(status_code=400, detail="No data found to export")
+
+    temp = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
+    df.to_excel(temp.name, index=False)
+    temp.close()
+    
+    # 다운로드용 파일 전송
+    return FileResponse(
+        temp.name, 
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename=f"AMEVA_Benchmark_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    )
+
+@router.post("/api/reports/export/word")
+def export_word(req: ExportWordRequest):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # 1. 런 메타데이터 획득
+    cursor.execute("SELECT * FROM benchmark_runs WHERE id = ?;", (req.run_id,))
+    run_row = cursor.fetchone()
+    if not run_row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Run not found")
+    run = dict(run_row)
+    
+    # 2. 결과 획득
+    cursor.execute("SELECT * FROM benchmark_results WHERE run_id = ?;", (req.run_id,))
+    results = [dict(r) for r in cursor.fetchall()]
+    conn.close()
+
+    if not results:
+        raise HTTPException(status_code=400, detail="No benchmark results associated with this run")
+
+    # 3. LLM 요약 가동 여부
+    summary_text = "요약을 비활성화했습니다."
+    if req.use_llm_summary:
+        judge_model = run.get("judge_model", state.config_data["default_judge_model"])
+        broadcaster.log(f"📝 보고서 분석용 요약 요청 시작: {judge_model}", "sys")
+        
+        # 프롬프트 생성
+        prompt_data = (
+            "아래 하네스 벤치마크 결과를 요약 분석하여, 해당 AI 엣지 디바이스 구동환경에서의 모델의 "
+            "추론 속도, 지능 지표, 전력 효율성 측면의 강점과 한계점을 5줄 내외의 격식 있고 일목요연한 "
+            "한글 요약글(Executive Summary)로 작성해 주세요. 문단 앞머리에 마크다운이나 특수 기호 없이 담백하게 작성하세요.\n\n"
+            f"모델: {run['model_name']} ({run['engine_type']} 엔진)\n"
+            f"설정: Cores={run['cpu_cores']}, RAM={run['ram_mb']}MB, Threads={run['threads']}, Context={run['n_ctx']}\n"
+            "상세 태스크 지표:\n"
+        )
+        for r in results:
+            prompt_data += f"- {r['task_name']} ({r['category']}): TTFT={r['ttft_ms']}ms, TPS={r['tps']}t/s, 전력={r['avg_gpu_w']}W, 점수={r['judge_score']}/10\n"
+
+        try:
+            # Ollama를 통해 요약 텍스트 추출 (Temperature 0.2로 격식 있고 정보적인 글 생성 유도)
+            messages = [
+                {"role": "system", "content": "You are a professional IT technology reporting assistant. Answer in precise Korean."},
+                {"role": "user", "content": prompt_data}
+            ]
+            resp = OllamaClient.chat_stream(judge_model, messages, options={"temperature": 0.2})
+            resp.raise_for_status()
+            
+            full_summary = ""
+            for line in resp.iter_lines():
+                if line:
+                    chunk = json.loads(line)
+                    content = chunk.get("message", {}).get("content", "")
+                    full_summary += content
+            summary_text = full_summary.strip()
+            broadcaster.log("📝 보고서 요약 생성 완료.", "sys")
+        except Exception as e:
+            summary_text = f"요약 실패 (에러: {e})"
+            broadcaster.log(f"❌ 보고서 요약 실패: {e}", "sys")
+
+    # 4. Word 문서 빌드 (python-docx 활용)
+    doc = Document()
+    
+    # 기본 스타일 적용
+    style = doc.styles['Normal']
+    font = style.font
+    font.name = '맑은 고딕'
+    font.size = Pt(11)
+
+    # 4.1. 타이틀 추가
+    title_p = doc.add_paragraph()
+    title_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    title_run = title_p.add_run("AMEVA AI 엣지 벤치마크 성능 평가 결과 보고서")
+    title_run.font.size = Pt(20)
+    title_run.font.bold = True
+    title_run.font.color.rgb = RGBColor(15, 23, 42) # Dark Slate Color
+
+    # 4.2. 기본 구동 사양 요약 정보
+    doc.add_paragraph(f"보고서 생성일시: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    
+    doc.add_heading("1. 구동 환경 사양 및 모델 요약", level=2)
+    meta_p = doc.add_paragraph()
+    meta_p.add_run(f"• 대상 모델: {run['model_name']}\n").bold = True
+    meta_p.add_run(f"• 추론 엔진: {run['engine_type']}\n")
+    meta_p.add_run(f"• 할당 자원: CPU Cores={run['cpu_cores']} | RAM={run['ram_mb']}MB | GPU Layers={run['gpu_layers']}\n")
+    meta_p.add_run(f"• 튜닝 파라미터: Threads={run['threads']} | n_ctx={run['n_ctx']} | Temp={run['temperature']}\n")
+    meta_p.add_run(f"• 평가에 사용된 판정관: {run['judge_model']}")
+
+    # 4.3. AI 종합 보고 요약문 (Executive Summary)
+    doc.add_heading("2. Executive Summary (AI 종합 분석 요약)", level=2)
+    summary_box = doc.add_paragraph()
+    summary_box.paragraph_format.left_indent = Inches(0.2)
+    summary_box.paragraph_format.right_indent = Inches(0.2)
+    run_sum = summary_box.add_run(summary_text)
+    run_sum.italic = True
+    run_sum.font.size = Pt(10.5)
+
+    # 4.4. 개별 하네스 측정 지표 테이블 추가
+    doc.add_heading("3. 태스크별 세부 측정 데이터", level=2)
+    
+    # 테이블 칼럼 헤더: Task ID, TTFT, TPS, Power, Efficiency, Score
+    table = doc.add_table(rows=1, cols=6)
+    table.style = 'Light Shading Accent 1'
+    hdr_cells = table.rows[0].cells
+    hdr_cells[0].text = 'Task ID'
+    hdr_cells[1].text = 'TTFT'
+    hdr_cells[2].text = 'TPS'
+    hdr_cells[3].text = '평균전력'
+    hdr_cells[4].text = '전성비(t/J)'
+    hdr_cells[5].text = '판정점수'
+
+    # 셀 쉐이딩 함수 정의
+    def set_cell_background(cell, color_hex):
+        shading_xml = f'<w:shd {nsdecls("w")} w:fill="{color_hex}"/>'
+        cell._tc.get_or_add_tcPr().append(parse_xml(shading_xml))
+
+    # 헤더 쉐이딩
+    for cell in hdr_cells:
+        set_cell_background(cell, "0F172A") # Dark Slate
+        for paragraph in cell.paragraphs:
+            for run_cell in paragraph.runs:
+                run_cell.font.bold = True
+                run_cell.font.color.rgb = RGBColor(255, 255, 255)
+
+    for item in results:
+        row_cells = table.add_row().cells
+        row_cells[0].text = str(item['task_name'])
+        row_cells[1].text = f"{item['ttft_ms']:.1f} ms"
+        row_cells[2].text = f"{item['tps']:.2f} t/s"
+        row_cells[3].text = f"{item['avg_gpu_w']:.1f} W"
+        row_cells[4].text = f"{item['tokens_per_joule']:.3f} t/J"
+        row_cells[5].text = str(item['judge_score'])
+
+        # 결과 점수 강조
+        try:
+            score_num = float(item['judge_score'])
+            if score_num >= 8.0:
+                set_cell_background(row_cells[5], "D1FAE5") # Light Emerald Accent
+            elif score_num <= 4.0:
+                set_cell_background(row_cells[5], "FEE2E2") # Light Red Accent
+        except:
+            pass
+
+    # 4.5. 모델 답변 전문 첨부
+    doc.add_heading("4. 상세 답변 및 판정 의견", level=2)
+    for idx, item in enumerate(results):
+        doc.add_heading(f"태스크 {idx+1}: {item['task_name']}", level=3)
+        doc.add_paragraph(f"질문(Prompt): {item['prompt_text']}")
+        
+        resp_p = doc.add_paragraph()
+        resp_p.add_run("답변(Response):\n").bold = True
+        resp_p.add_run(item['response_text'])
+        resp_p.style = 'Quote'
+        
+        reason_p = doc.add_paragraph()
+        reason_p.add_run("판정 의견(Rationale):\n").bold = True
+        reason_p.add_run(item['judge_reason'])
+
+    # 파일 저장
+    temp = tempfile.NamedTemporaryFile(delete=False, suffix=".docx")
+    doc.save(temp.name)
+    temp.close()
+
+    return FileResponse(
+        temp.name,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        filename=f"AMEVA_Performance_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx"
+    )

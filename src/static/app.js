@@ -1,4 +1,4 @@
-// app.js - AMEVA Edge Matrix Core controller
+// app.js - AMEVA Edge Matrix Core controller (SQLite + Word/Excel Reporting)
 
 let activeTab = 'dashboard';
 let currentActiveModel = null;
@@ -20,6 +20,7 @@ window.addEventListener('DOMContentLoaded', () => {
     startSessionStatusPolling();
     loadReports();
     initCanvas();
+    loadConfigFromBackend();
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -36,7 +37,7 @@ function initWebSockets() {
         updateTelemetry(data);
     };
     telemetryWs.onclose = () => {
-        setTimeout(initWebSockets, 3000); // 3초 후 재연결 시도
+        setTimeout(initWebSockets, 3000);
     };
 
     // Logs & Chunks WebSocket
@@ -51,25 +52,21 @@ function initWebSockets() {
 }
 
 function updateTelemetry(data) {
-    // Text update
     document.getElementById('val-cpu').innerText = `${data.cpu.toFixed(1)}%`;
     document.getElementById('val-ram').innerText = `${data.ram.toFixed(1)} / ${data.ram_total.toFixed(1)} GB`;
     document.getElementById('val-gpu').innerText = `${data.gpu_percent.toFixed(1)}%`;
     document.getElementById('val-vram').innerText = `${Math.round(data.vram_used_mb)} / ${Math.round(data.vram_total_mb)} MB`;
     
-    // Progress Bar update
     document.getElementById('bar-cpu').style.width = `${data.cpu}%`;
     document.getElementById('bar-ram').style.width = `${(data.ram / data.ram_total) * 100}%`;
     document.getElementById('bar-gpu').style.width = `${data.gpu_percent}%`;
     const vramPct = data.vram_total_mb > 0 ? (data.vram_used_mb / data.vram_total_mb) * 100 : 0;
     document.getElementById('bar-vram').style.width = `${vramPct}%`;
 
-    // Power & Temperature info
     const power = data.power_w ? `${data.power_w.toFixed(1)}W` : 'N/A';
     const temp = data.temp_c ? `${data.temp_c}°C` : 'N/A';
     document.getElementById('val-power-temp').innerText = `전력: ${power}  |  온도: ${temp}`;
 
-    // Graph data accumulation
     cpuHistory.push(data.cpu);
     gpuHistory.push(data.gpu_percent);
     if (cpuHistory.length > historyLimit) cpuHistory.shift();
@@ -87,7 +84,6 @@ function handleIncomingLog(packet) {
         targetViewportId = 'log-viewport-bench';
     } else if (type === 'chunk') {
         targetViewportId = 'log-viewport-stream';
-        // 만약 대화창에서 AI가 작성중이라면 대화 버블로 복제해줌
         appendChatChunk(text);
     }
 
@@ -99,10 +95,8 @@ function handleIncomingLog(packet) {
     line.innerText = text;
     viewport.appendChild(line);
 
-    // Auto-scroll
     viewport.scrollTop = viewport.scrollHeight;
 
-    // Limit log lines to 1000
     if (viewport.childNodes.length > 1000) {
         viewport.removeChild(viewport.firstChild);
     }
@@ -135,7 +129,6 @@ function drawTelemetryGraph() {
 
     ctx.clearRect(0, 0, w, h);
 
-    // Draw grid
     ctx.strokeStyle = 'rgba(46, 59, 78, 0.3)';
     ctx.lineWidth = 1;
     for (let i = 1; i < 4; i++) {
@@ -147,11 +140,7 @@ function drawTelemetryGraph() {
     }
 
     const step = w / (historyLimit - 1);
-
-    // Draw CPU Line (Light Blue)
     drawDataLine(cpuHistory, step, '#3b82f6', 'rgba(59, 130, 246, 0.08)');
-
-    // Draw GPU Line (Green)
     drawDataLine(gpuHistory, step, '#10b981', 'rgba(16, 185, 129, 0.08)');
 }
 
@@ -170,12 +159,98 @@ function drawDataLine(history, step, color, fillGradientColor) {
     ctx.lineWidth = 1.5;
     ctx.stroke();
 
-    // Fill under line
     ctx.lineTo((history.length - 1) * step, h);
     ctx.lineTo(0, h);
     ctx.closePath();
     ctx.fillStyle = fillGradientColor;
     ctx.fill();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Config & Settings (JSON Config)
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function loadConfigFromBackend() {
+    try {
+        const resp = await fetch('/api/config');
+        const data = await resp.json();
+        
+        document.getElementById('stress-judgemodel').value = data.default_judge_model || "exaone3.5:7.8b";
+        document.getElementById('config-engine').value = data.last_used_engine || "OLM";
+        document.getElementById('config-cpu').value = data.last_used_cores || 2.0;
+        document.getElementById('config-ram').value = data.last_used_ram || 4096;
+        document.getElementById('config-gpu').value = data.last_used_gpu_layers || 0;
+        
+        currentActiveEngine = data.last_used_engine || "OLM";
+    } catch(e) {
+        console.error("Config load failed", e);
+    }
+}
+
+async function saveJudgeModel() {
+    const judgeModel = document.getElementById('stress-judgemodel').value.trim();
+    if (!judgeModel) {
+        alert("판정관 모델 이름을 입력해주세요.");
+        return;
+    }
+    await updateConfig({ default_judge_model: judgeModel });
+    showToast();
+}
+
+async function openGlobalSettings() {
+    try {
+        const resp = await fetch('/api/config');
+        const data = await resp.json();
+        
+        document.getElementById('set-vault-dir').value = data.vault_dir;
+        document.getElementById('set-bitnet-dir').value = data.bit_vault_dir;
+        document.getElementById('set-judge-model').value = data.default_judge_model;
+        
+        document.getElementById('modal-settings').classList.add('active');
+    } catch(e) {
+        alert("설정을 읽어오지 못했습니다.");
+    }
+}
+
+async function saveGlobalSettings() {
+    const vault = document.getElementById('set-vault-dir').value.trim();
+    const bitnet = document.getElementById('set-bitnet-dir').value.trim();
+    const judge = document.getElementById('set-judge-model').value.trim();
+    
+    if (!vault || !bitnet || !judge) {
+        alert("모든 설정 값을 기입해 주세요.");
+        return;
+    }
+
+    await updateConfig({
+        vault_dir: vault,
+        bit_vault_dir: bitnet,
+        default_judge_model: judge
+    });
+
+    document.getElementById('stress-judgemodel').value = judge;
+    closeModal('settings');
+    showToast();
+}
+
+async function updateConfig(payload) {
+    try {
+        await fetch('/api/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+    } catch(e) {
+        console.error("Config update failed", e);
+    }
+}
+
+function showToast() {
+    const toast = document.getElementById('toast');
+    toast.style.display = 'block';
+    setTimeout(() => {
+        toast.style.display = 'none';
+    }, 2000);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -219,7 +294,6 @@ async function checkSessionStatus() {
             document.getElementById('btn-boot').disabled = false;
             document.getElementById('btn-shutdown').disabled = true;
         } else {
-            // OFFLINE
             statusText.innerText = `오프라인 - 커널 동작 정지 상태`;
             document.getElementById('btn-boot').disabled = false;
             document.getElementById('btn-shutdown').disabled = true;
@@ -227,7 +301,6 @@ async function checkSessionStatus() {
             document.getElementById('active-model-display').style.color = "var(--text-muted)";
         }
 
-        // Benchmark Run Button Disable if already running
         const runBtn = document.getElementById('btn-run');
         if (data.benchmark_running || data.chat_running) {
             runBtn.disabled = true;
@@ -267,7 +340,7 @@ async function bootKernel() {
         });
         if (resp.ok) {
             switchLogTab('sys');
-            document.getElementById('log-viewport-sys').innerText = ""; // Clear logs
+            document.getElementById('log-viewport-sys').innerText = ""; 
         } else {
             const err = await resp.json();
             alert(`커널 가동 요청 실패: ${err.detail}`);
@@ -318,14 +391,12 @@ async function loadGalleryModels() {
         
         container.innerHTML = "";
         
-        // Group models by category
         const categories = {};
         data.models.forEach(m => {
             if (!categories[m.category]) categories[m.category] = [];
             categories[m.category].push(m);
         });
 
-        // Loop categories
         for (const [catName, catModels] of Object.entries(categories)) {
             const meta = data.categories[catName];
             
@@ -350,7 +421,6 @@ async function loadGalleryModels() {
                     card.style.backgroundColor = 'rgba(59, 130, 246, 0.05)';
                 }
 
-                // Left Block
                 const left = document.createElement('div');
                 left.className = 'model-card-info';
                 
@@ -381,7 +451,6 @@ async function loadGalleryModels() {
 
                 card.appendChild(left);
 
-                // Right Block (Buttons)
                 const right = document.createElement('div');
                 right.className = 'model-card-actions';
 
@@ -439,7 +508,6 @@ async function selectModel(modelName, engineType) {
     document.getElementById('active-model-display').style.color = "var(--accent)";
     closeModal('gallery');
     
-    // Status polling will sync everything
     alert(`모델이 선택되었습니다: ${modelName} (${engineType})`);
 }
 
@@ -455,8 +523,7 @@ async function downloadModel(modelId, isOllama, engineType) {
             })
         });
         if (resp.ok) {
-            loadGalleryModels(); // Refresh view
-            // Poll for gallery updates in background while modal is open
+            loadGalleryModels();
             startGalleryPolling();
         }
     } catch(e) {
@@ -524,7 +591,7 @@ function renderHarnessTable() {
         const tr = document.createElement('tr');
         
         const tdId = document.createElement('td');
-        tdId.innerText = task.task;
+        tdId.innerText = task.task_id;
         tdId.style.fontWeight = '700';
         tdId.style.color = '#fff';
         tr.appendChild(tdId);
@@ -534,7 +601,7 @@ function renderHarnessTable() {
         tdPrompt.style.whiteSpace = 'nowrap';
         tdPrompt.style.overflow = 'hidden';
         tdPrompt.style.textOverflow = 'ellipsis';
-        tdPrompt.style.maxWidth = '300px';
+        tdPrompt.style.maxWidth = '320px';
         tr.appendChild(tdPrompt);
 
         const tdRegex = document.createElement('td');
@@ -547,6 +614,7 @@ function renderHarnessTable() {
         tr.appendChild(tdEval);
 
         const tdActions = document.createElement('td');
+        tdActions.style.textAlign = 'center';
         const delBtn = document.createElement('button');
         delBtn.className = 'btn btn-danger';
         delBtn.style.padding = '3px 8px';
@@ -582,7 +650,7 @@ function addHarnessTask() {
     }
 
     const task = {
-        task: idInput.value.trim(),
+        task_id: idInput.value.trim(),
         prompt: promptInput.value.trim(),
         eval_type: evalInput.value,
         expected_regex: evalInput.value === 'regex' ? regexInput.value.trim() : ""
@@ -591,7 +659,6 @@ function addHarnessTask() {
     harnessTasks.push(task);
     renderHarnessTable();
 
-    // Reset inputs
     idInput.value = "";
     promptInput.value = "";
     regexInput.value = "";
@@ -610,7 +677,7 @@ async function commitHarness() {
             body: JSON.stringify(harnessTasks)
         });
         if (resp.ok) {
-            alert("harness_v4.csv 에 성공적으로 저장 및 커밋되었습니다.");
+            alert("SQLite 데이터베이스에 정상 동기화되었습니다.");
             closeModal('harness');
         } else {
             alert("저장 실패");
@@ -633,10 +700,13 @@ async function runBenchmark() {
     
     const threads = parseInt(document.getElementById('stress-threads').value);
     const nctx = parseInt(document.getElementById('stress-nctx').value);
+    
+    // 아코디언이 닫혀있어도 값을 읽어옴
     const temp = parseFloat(document.getElementById('stress-temp').value);
     const penalty = parseFloat(document.getElementById('stress-penalty').value);
     const sysPrompt = document.getElementById('stress-sysprompt').value;
-    const judgeModel = document.getElementById('stress-judgemodel').value;
+    
+    const judgeModel = document.getElementById('stress-judgemodel').value.trim();
 
     if (!currentActiveModel) {
         alert("실행할 액티브 모델을 먼저 선택해주세요!");
@@ -644,7 +714,6 @@ async function runBenchmark() {
         return;
     }
 
-    // Clear logs
     document.getElementById('log-viewport-sys').innerText = "";
     document.getElementById('log-viewport-bench').innerText = "";
     document.getElementById('log-viewport-stream').innerText = "";
@@ -707,13 +776,10 @@ async function sendChatMessage() {
     }
 
     input.value = "";
-
-    // Append User Message
     appendChatBubble(prompt, 'user');
-
-    // Create and Append AI Pending Message
     activeAiBubble = appendChatBubble("⏳ AI 추론 중…", 'ai');
-    document.getElementById('log-viewport-stream').innerText = ""; // Clear stream view
+    
+    document.getElementById('log-viewport-stream').innerText = ""; 
     switchLogTab('stream');
 
     const engine = document.getElementById('config-engine').value;
@@ -761,7 +827,7 @@ async function sendChatMessage() {
             activeAiBubble = null;
         }
     } catch(e) {
-        activeAiBubble.innerText = `❌ 통신 장매 발생`;
+        activeAiBubble.innerText = `❌ 통신 장애 발생`;
         activeAiBubble = null;
     }
 }
@@ -781,7 +847,6 @@ function appendChatChunk(chunk) {
         if (activeAiBubble.innerText === "⏳ AI 추론 중…") {
             activeAiBubble.innerText = "";
         }
-        // Judge Rationale가 진행될 때 구분선 처리
         if (chunk.includes("Local Judge Thought")) {
             activeAiBubble.innerHTML += `<div style="margin-top:12px; padding-top:10px; border-top:1px dashed var(--border-color); color:var(--warn); font-size:11px; font-family:monospace;">${chunk}</div>`;
         } else {
@@ -793,11 +858,12 @@ function appendChatChunk(chunk) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Reports View
+// Reports SQLite History View
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function loadReports() {
     const tbody = document.getElementById('reports-table-body');
+    tbody.innerHTML = "<tr><td colspan='10' style='text-align:center;'>조회 중...</td></tr>";
     
     try {
         const resp = await fetch('/api/reports');
@@ -805,40 +871,180 @@ async function loadReports() {
         
         tbody.innerHTML = "";
         if (data.length === 0) {
-            tbody.innerHTML = "<tr><td colspan='9' style='text-align: center; color: var(--text-muted);'>데이터가 없습니다.</td></tr>";
+            tbody.innerHTML = "<tr><td colspan='10' style='text-align: center; color: var(--text-muted);'>리포트 이력이 없습니다.</td></tr>";
             return;
         }
 
         data.forEach(r => {
             const tr = document.createElement('tr');
             
-            const timestamp = r.Timestamp || "-";
-            const model = r.Model_Hash || "-";
-            const category = r.Benchmark_Category || "-";
-            const ttft = r["TTFT (ms)"] ? `${r["TTFT (ms)"]} ms` : "-";
-            const tps = r["Generation (t/s)"] ? `${r["Generation (t/s)"]} t/s` : "-";
-            const watts = r["Avg_GPU_W"] ? `${r["Avg_GPU_W"]} W` : "-";
-            const eff = r["Tokens_per_Joule"] ? r["Tokens_per_Joule"] : "-";
-            const score = r["Judge_Score"] || "-";
+            const timestamp = r.timestamp || "-";
+            const model = r.model_name || "-";
+            const engine = r.engine_type || "-";
+            const mode = r.run_mode || "-";
+            const count = r.task_count || 0;
+            const ttft = r.avg_ttft ? `${r.avg_ttft.toFixed(1)} ms` : "-";
+            const tps = r.avg_tps ? `${r.avg_tps.toFixed(2)} t/s` : "-";
+            const watts = r.avg_power ? `${r.avg_power.toFixed(1)} W` : "-";
+            const score = r.avg_score ? `${r.avg_score.toFixed(2)}` : "-";
             
-            let reason = r["Judge_Reason"] || "-";
-            if (reason.length > 50) reason = reason.substring(0, 50) + "...";
-
             tr.innerHTML = `
                 <td>${timestamp}</td>
-                <td style="font-weight:700;">${model}</td>
-                <td>${category}</td>
+                <td style="font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:140px;" title="${model}">${model}</td>
+                <td>${engine}</td>
+                <td>${mode}</td>
+                <td style="text-align:center;">${count}</td>
                 <td>${ttft}</td>
                 <td>${tps}</td>
                 <td>${watts}</td>
-                <td>${eff}</td>
                 <td style="font-weight:700; color:var(--accent);">${score}</td>
-                <td title="${r["Judge_Reason"] || ""}">${reason}</td>
+                <td style="text-align: center;">
+                    <button class="btn" style="padding:4px 8px; font-size:11px;" onclick="viewReportDetail(${r.id})">👁️ 상세보기</button>
+                    <button class="btn btn-primary" style="padding:4px 8px; font-size:11px;" onclick="exportSingleWord(${r.id})">Word</button>
+                    <button class="btn btn-accent" style="padding:4px 8px; font-size:11px;" onclick="exportSingleExcel(${r.id})">Excel</button>
+                    <button class="btn btn-danger" style="padding:4px 8px; font-size:11px;" onclick="deleteReport(${r.id})">🗑️</button>
+                </td>
             `;
             tbody.appendChild(tr);
         });
     } catch(e) {
-        tbody.innerHTML = "<tr><td colspan='9' style='text-align: center; color: var(--danger);'>로드 실패</td></tr>";
+        tbody.innerHTML = "<tr><td colspan='10' style='text-align: center; color: var(--danger);'>로드 실패</td></tr>";
+    }
+}
+
+async function viewReportDetail(runId) {
+    try {
+        const resp = await fetch(`/api/reports/${runId}`);
+        const data = await resp.json();
+        
+        const run = data.run;
+        const results = data.results;
+        
+        document.getElementById('detail-modal-title').innerText = `📊 벤치마크 상세 보고서 [ID: ${run.id}]`;
+        
+        const metaDiv = document.getElementById('detail-run-meta');
+        metaDiv.innerHTML = `
+            <div><strong>모델명:</strong> ${run.model_name}</div>
+            <div><strong>엔진/모드:</strong> ${run.engine_type} / ${run.run_mode}</div>
+            <div><strong>자원 설정:</strong> Cores=${run.cpu_cores} | RAM=${run.ram_mb}MB | GPU Layers=${run.gpu_layers}</div>
+            <div><strong>측정 일시:</strong> ${run.timestamp}</div>
+            <div><strong>튜닝 변수:</strong> Threads=${run.threads} | n_ctx=${run.n_ctx} | Temp=${run.temperature}</div>
+            <div><strong>판정관 모델:</strong> ${run.judge_model}</div>
+        `;
+        
+        const tbody = document.getElementById('detail-results-tbody');
+        tbody.innerHTML = "";
+        
+        results.forEach(res => {
+            const tr = document.createElement('tr');
+            
+            // 특수한 점수(PASS/FAIL) 색상 표시
+            let scoreColor = "var(--text-primary)";
+            if (res.judge_score.includes("PASS")) scoreColor = "var(--accent)";
+            else if (res.judge_score.includes("FAIL")) scoreColor = "var(--danger)";
+            else if (!isNaN(parseFloat(res.judge_score))) {
+                const s = parseFloat(res.judge_score);
+                if (s >= 8) scoreColor = "var(--accent)";
+                else if (s <= 4) scoreColor = "var(--danger)";
+            }
+
+            // 인라인으로 상세 프롬프트/답변을 모달 전달하기 위한 이스케이프 처리
+            const promptEscaped = escapeHtml(res.prompt_text);
+            const responseEscaped = escapeHtml(res.response_text);
+            const reasonEscaped = escapeHtml(res.judge_reason);
+
+            tr.innerHTML = `
+                <td style="font-weight:700;">${res.task_name}</td>
+                <td>${res.category}</td>
+                <td>${res.ttft_ms.toFixed(1)} ms</td>
+                <td>${res.tps.toFixed(2)} t/s</td>
+                <td>${res.avg_gpu_w.toFixed(1)} W</td>
+                <td style="font-weight:700; color:${scoreColor};">${res.judge_score}</td>
+                <td>
+                    <button class="btn" style="padding:2px 6px; font-size:11px;" onclick="showTaskDetail(\`${promptEscaped}\`, \`${responseEscaped}\`, \`${reasonEscaped}\`)">👁️ 검사</button>
+                </td>
+            `;
+            tbody.appendChild(tr);
+        });
+        
+        // Footer Buttons Event binding
+        document.getElementById('detail-btn-word').onclick = () => exportSingleWord(run.id);
+        document.getElementById('detail-btn-excel').onclick = () => exportSingleExcel(run.id);
+        
+        document.getElementById('modal-report-detail').classList.add('active');
+    } catch(e) {
+        alert("상세 데이터를 가져오지 못했습니다.");
+    }
+}
+
+function showTaskDetail(prompt, response, reason) {
+    document.getElementById('task-detail-prompt').innerText = unescapeHtml(prompt);
+    document.getElementById('task-detail-response').innerText = unescapeHtml(response);
+    document.getElementById('task-detail-reason').innerText = unescapeHtml(reason);
+    
+    document.getElementById('modal-task-detail').classList.add('active');
+}
+
+async function deleteReport(runId) {
+    if (!confirm("해당 벤치마크 이력을 데이터베이스에서 삭제하시겠습니까? (복구 불가능)")) return;
+    try {
+        const resp = await fetch(`/api/reports/${runId}`, { method: 'DELETE' });
+        if (resp.ok) {
+            loadReports();
+        }
+    } catch(e) {
+        alert("삭제 실패");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EXCEL & WORD EXPORTS DOWNLOAD
+// ─────────────────────────────────────────────────────────────────────────────
+
+function exportFullExcel() {
+    window.open('/api/reports/export/excel', '_blank');
+}
+
+function exportSingleExcel(runId) {
+    window.open(`/api/reports/export/excel?run_id=${runId}`, '_blank');
+}
+
+async function exportSingleWord(runId) {
+    const useLlm = document.getElementById('report-llm-summary').checked;
+    
+    // 파일 다운로드 중이라는 피드백 제공 (LLM 동작 시 수 초 소요될 수 있음)
+    const toast = document.getElementById('toast');
+    toast.innerText = "📝 Word 보고서 생성 및 AI 요약 분석 중…";
+    toast.style.backgroundColor = "var(--warn)";
+    toast.style.display = 'block';
+
+    try {
+        const resp = await fetch('/api/reports/export/word', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                run_id: runId,
+                use_llm_summary: useLlm
+            })
+        });
+        
+        toast.style.display = 'none';
+        
+        if (resp.ok) {
+            const blob = await resp.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `AMEVA_Report_Run_${runId}.docx`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+        } else {
+            alert("보고서 생성 실패");
+        }
+    } catch (e) {
+        toast.style.display = 'none';
+        alert("네트워크 장애로 보고서를 다운로드할 수 없습니다.");
     }
 }
 
@@ -849,7 +1055,6 @@ async function loadReports() {
 function switchTab(tabId) {
     activeTab = tabId;
     
-    // Header Buttons Active State
     const btns = document.querySelectorAll('.nav-tabs .tab-btn');
     btns.forEach(btn => {
         if (btn.getAttribute('onclick').includes(tabId)) {
@@ -859,7 +1064,6 @@ function switchTab(tabId) {
         }
     });
 
-    // Content Display
     const panes = document.querySelectorAll('.tab-pane');
     panes.forEach(pane => {
         if (pane.id === `tab-${tabId}`) {
@@ -892,4 +1096,42 @@ function switchLogTab(logId) {
             viewport.style.display = 'none';
         }
     });
+}
+
+function toggleAccordion() {
+    const body = document.getElementById('accordion-body');
+    const arrow = document.getElementById('accordion-arrow');
+    body.classList.toggle('open');
+    if (body.classList.contains('open')) {
+        arrow.innerText = '▲';
+    } else {
+        arrow.innerText = '▼';
+    }
+}
+
+// String Helper Escapes
+function escapeHtml(text) {
+    if (!text) return "";
+    return text
+         .replace(/&/g, "&amp;")
+         .replace(/</g, "&lt;")
+         .replace(/>/g, "&gt;")
+         .replace(/"/g, "&quot;")
+         .replace(/'/g, "&#039;")
+         .replace(/`/g, "\\`")
+         .replace(/\n/g, "\\n")
+         .replace(/\r/g, "\\r");
+}
+
+function unescapeHtml(text) {
+    if (!text) return "";
+    return text
+         .replace(/\\n/g, "\n")
+         .replace(/\\r/g, "\r")
+         .replace(/\\`/g, "`")
+         .replace(/&lt;/g, "<")
+         .replace(/&gt;/g, ">")
+         .replace(/&quot;/g, '"')
+         .replace(/&#039;/g, "'")
+         .replace(/&amp;/g, "&");
 }

@@ -15,15 +15,14 @@ DEFAULT_JUDGE_MODEL = "exaone3:7.8b"
 DEFAULT_INFERENCE_MODEL = "qwen2.5:1.5b"
 
 def get_vault_abs_path():
-    """프로젝트 루트 기준 ai_vault의 절대 경로를 반환합니다."""
-    return os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", "..", VAULT_DIR_NAME)
-    )
-
-def get_bit_vault_abs_path():
-    """프로젝트 루트 기준 ai_bit_vault의 절대 경로를 반환합니다."""
-    path = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", "..", BIT_VAULT_DIR_NAME)
-    )
+    """c:\\ameva\\models\\llm 경로를 반환합니다."""
+    path = "c:\\ameva\\models\\llm"
     os.makedirs(path, exist_ok=True)
     return path
+
+def get_bit_vault_abs_path():
+    """c:\\ameva\\models\\bitnet 경로를 반환합니다."""
+    path = "c:\\ameva\\models\\bitnet"
+    os.makedirs(path, exist_ok=True)
+    return path
+

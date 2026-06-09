@@ -5,9 +5,67 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AMEVA EDGE MATRIX v5.6</title>
     <link rel="stylesheet" href="style.css">
+    <style>
+        /* 추가 인라인 레이아웃 최적화 (가독성 향상) */
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: 320px 1fr 380px;
+            gap: 16px;
+            width: 100%;
+            height: 100%;
+        }
+        @media (max-width: 1200px) {
+            .dashboard-grid {
+                grid-template-columns: 300px 1fr;
+            }
+            .col-right {
+                grid-column: span 2;
+                height: 300px;
+            }
+        }
+        .settings-accordion {
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            margin-top: 8px;
+            background: rgba(255,255,255,0.01);
+        }
+        .accordion-header {
+            padding: 8px 12px;
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--text-secondary);
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: var(--surface-light);
+        }
+        .accordion-body {
+            padding: 12px;
+            display: none;
+        }
+        .accordion-body.open {
+            display: block;
+        }
+        .toast {
+            position: fixed;
+            bottom: 40px;
+            right: 20px;
+            background-color: var(--accent);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 6px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            display: none;
+            z-index: 2000;
+        }
+    </style>
 </head>
 <body>
     <div class="app-container">
+        <!-- Toast Notification -->
+        <div id="toast" class="toast">설정이 저장되었습니다.</div>
+
         <!-- Header -->
         <header>
             <h1>⚙️ AMEVA EDGE MATRIX <span style="font-size: 11px; padding: 2px 6px; background: rgba(255,255,255,0.05); border-radius: 4px; color: var(--accent);">v5.6 Singularity</span></h1>
@@ -16,6 +74,7 @@
                 <button class="tab-btn" onclick="openModelGallery()">모델 갤러리</button>
                 <button class="tab-btn" onclick="openHarnessManager()">하네스 매니저</button>
                 <button class="tab-btn" onclick="switchTab('reports')">리포트 이력</button>
+                <button class="tab-btn" onclick="openGlobalSettings()">환경 설정</button>
             </div>
         </header>
 
@@ -24,53 +83,53 @@
             
             <!-- TAB: Dashboard (Default) -->
             <div id="tab-dashboard" class="tab-pane active">
-                
-                <!-- Left Column: Settings -->
-                <div class="panel col-left">
-                    <!-- Kernel Settings -->
-                    <div class="sub-panel">
-                        <h3>1. 커널 가동 설정 (Smart SWAP)</h3>
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label for="config-engine">추론 엔진</label>
-                                <select id="config-engine" onchange="onEngineChange()">
-                                    <option value="OLM" selected>Ollama</option>
-                                    <option value="ENG">llama.cpp</option>
-                                    <option value="BIT">BitNet.cpp</option>
-                                </select>
+                <div class="dashboard-grid">
+                    
+                    <!-- Left Column: Settings -->
+                    <div class="panel col-left" style="overflow-y: auto;">
+                        <!-- Kernel Settings -->
+                        <div class="sub-panel">
+                            <h3>1. 커널 가동 설정 (Smart SWAP)</h3>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="config-engine">추론 엔진</label>
+                                    <select id="config-engine" onchange="onEngineChange()">
+                                        <option value="OLM" selected>Ollama</option>
+                                        <option value="ENG">llama.cpp</option>
+                                        <option value="BIT">BitNet.cpp</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="config-cpu">CPU Cores</label>
+                                    <input type="number" id="config-cpu" value="2.0" step="0.5" min="0.5" max="32">
+                                </div>
                             </div>
-                            <div class="form-group">
-                                <label for="config-cpu">CPU Cores</label>
-                                <input type="number" id="config-cpu" value="2.0" step="0.5" min="0.5" max="32">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="config-ram">RAM 한계 (MB)</label>
+                                    <input type="number" id="config-ram" value="4096" step="512" min="512" max="65536">
+                                </div>
+                                <div class="form-group">
+                                    <label for="config-gpu">GPU Layers</label>
+                                    <input type="number" id="config-gpu" value="0" min="0" max="100">
+                                </div>
+                            </div>
+                            <div class="form-group" style="margin-top: 10px;">
+                                <label>액티브 모델</label>
+                                <div style="display: flex; gap: 8px; align-items: center; justify-content: space-between;">
+                                    <span id="active-model-display" style="font-weight: 700; color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px;">미선택 (OFFLINE)</span>
+                                    <button class="btn" style="padding: 4px 10px; font-size: 11px;" onclick="openModelGallery()">선택/다운로드</button>
+                                </div>
+                            </div>
+                            <div style="display: flex; gap: 8px; margin-top: 12px;">
+                                <button id="btn-boot" class="btn btn-primary" style="flex: 1;" onclick="bootKernel()">커널 가동</button>
+                                <button id="btn-shutdown" class="btn btn-danger" style="flex: 1;" onclick="shutdownKernel()" disabled>커널 셧다운</button>
                             </div>
                         </div>
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label for="config-ram">RAM 한계 (MB)</label>
-                                <input type="number" id="config-ram" value="4096" step="512" min="512" max="65536">
-                            </div>
-                            <div class="form-group">
-                                <label for="config-gpu">GPU Offload 레이어</label>
-                                <input type="number" id="config-gpu" value="0" min="0" max="100">
-                            </div>
-                        </div>
-                        <div class="form-group" style="margin-top: 10px;">
-                            <label>액티브 모델</label>
-                            <div style="display: flex; gap: 8px; align-items: center;">
-                                <span id="active-model-display" style="font-weight: 700; color: var(--accent);">미선택 (OFFLINE)</span>
-                                <button class="btn" style="padding: 4px 10px; font-size: 11px;" onclick="openModelGallery()">선택/다운로드</button>
-                            </div>
-                        </div>
-                        <div style="display: flex; gap: 8px; margin-top: 12px;">
-                            <button id="btn-boot" class="btn btn-primary" style="flex: 1;" onclick="bootKernel()">커널 가동</button>
-                            <button id="btn-shutdown" class="btn btn-danger" style="flex: 1;" onclick="shutdownKernel()" disabled>커널 셧다운</button>
-                        </div>
-                    </div>
 
-                    <!-- Stress Protocol / Advanced Settings -->
-                    <div class="sub-panel" style="flex: 1; margin-bottom: 0; display: flex; flex-direction: column;">
-                        <h3>2. 추론 튜닝 & 채점 프로토콜</h3>
-                        <div style="flex: 1; overflow-y: auto; padding-right: 4px;">
+                        <!-- Stress Protocol / Advanced Settings -->
+                        <div class="sub-panel" style="margin-bottom: 0;">
+                            <h3>2. 추론 튜닝 & 채점 프로토콜</h3>
                             <div class="form-row">
                                 <div class="form-group">
                                     <label for="stress-threads">추론 스레드수</label>
@@ -81,132 +140,151 @@
                                     <input type="number" id="stress-nctx" value="2048" step="1024" min="512" max="32768">
                                 </div>
                             </div>
-                            <div class="form-row">
+                            
+                            <!-- Advanced parameter dropdown Accordion -->
+                            <div class="settings-accordion">
+                                <div class="accordion-header" onclick="toggleAccordion()">
+                                    <span>⚙️ 세부 추론 매개변수</span>
+                                    <span id="accordion-arrow">▼</span>
+                                </div>
+                                <div id="accordion-body" class="accordion-body">
+                                    <div class="form-row">
+                                        <div class="form-group">
+                                            <label for="stress-temp">Temperature</label>
+                                            <input type="number" id="stress-temp" value="0.1" step="0.1" min="0.0" max="2.0">
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="stress-penalty">Repeat Penalty</label>
+                                            <input type="number" id="stress-penalty" value="1.1" step="0.1" min="0.5" max="2.0">
+                                        </div>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="stress-sysprompt">System Prompt</label>
+                                        <textarea id="stress-sysprompt" style="height: 50px; resize: none; font-size: 11px;">You are a professional benchmark assistant. Answer precisely and concisely.</textarea>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="form-group" style="margin-top: 10px;">
+                                <label for="stress-judgemodel">판정관 모델 지정 (Ollama 태그 / 파일명)</label>
+                                <div style="display: flex; gap: 8px;">
+                                    <input type="text" id="stress-judgemodel" value="exaone3.5:7.8b" style="flex: 1;">
+                                    <button class="btn" style="padding: 4px 8px; font-size: 11px;" onclick="saveJudgeModel()">지정</button>
+                                </div>
+                            </div>
+
+                            <div style="border-top: 1px solid var(--border-color); padding-top: 12px; margin-top: 12px;">
                                 <div class="form-group">
-                                    <label for="stress-temp">Temperature (창의성)</label>
-                                    <input type="number" id="stress-temp" value="0.1" step="0.1" min="0.0" max="2.0">
+                                    <label for="run-mode">실행 모드</label>
+                                    <select id="run-mode" style="width: 100%;">
+                                        <option value="Inference Mode (Default)">Inference Mode (학술 지능 채점)</option>
+                                        <option value="Inference Mode + Efficiency">Inference Mode + Efficiency (전성비 측정)</option>
+                                        <option value="Stress Test Mode">Stress Test (llama-bench 부하)</option>
+                                        <option value="Stress Test + Efficiency">Stress Test + Efficiency (부하별 전력)</option>
+                                    </select>
                                 </div>
-                                <div class="form-group">
-                                    <label for="stress-penalty">Repeat Penalty</label>
-                                    <input type="number" id="stress-penalty" value="1.1" step="0.1" min="0.5" max="2.0">
-                                </div>
+                                <button id="btn-run" class="btn btn-accent" style="width: 100%; padding: 10px; font-size: 14px;" onclick="runBenchmark()">⚡ RUN BENCHMARK</button>
                             </div>
-                            <div class="form-group">
-                                <label for="stress-sysprompt">System Prompt (지침)</label>
-                                <textarea id="stress-sysprompt" style="height: 50px; resize: none; font-size: 11px;">You are a professional benchmark assistant. Answer precisely and concisely.</textarea>
-                            </div>
-                            <div class="form-group">
-                                <label for="stress-judgemodel">판정관 모델 (Ollama 로컬)</label>
-                                <input type="text" id="stress-judgemodel" value="exaone3.5:7.8b">
-                            </div>
-                        </div>
-
-                        <!-- Run Actions -->
-                        <div style="border-top: 1px solid var(--border-color); padding-top: 12px; margin-top: 10px;">
-                            <div class="form-group">
-                                <label for="run-mode">실행 모드</label>
-                                <select id="run-mode" style="width: 100%;">
-                                    <option value="Inference Mode (Default)">Inference Mode (학술 지능 채점)</option>
-                                    <option value="Inference Mode + Efficiency">Inference Mode + Efficiency (전성비 측정)</option>
-                                    <option value="Stress Test Mode">Stress Test (llama-bench CPU/GPU 부하)</option>
-                                    <option value="Stress Test + Efficiency">Stress Test + Efficiency (부하별 전력 측정)</option>
-                                </select>
-                            </div>
-                            <button id="btn-run" class="btn btn-accent" style="width: 100%; padding: 10px; font-size: 14px;" onclick="runBenchmark()">⚡ RUN BENCHMARK</button>
                         </div>
                     </div>
+
+                    <!-- Middle Column: Telemetry & Logs -->
+                    <div class="panel col-mid">
+                        <!-- Resource Telemetry -->
+                        <div class="sub-panel">
+                            <h3>3. 실시간 디바이스 텔레메트리 (1s 주기)</h3>
+                            <div class="telemetry-grid">
+                                <div class="metric-card">
+                                    <div class="metric-header">
+                                        <span>CPU 부하량</span>
+                                        <span id="val-cpu">0.0%</span>
+                                    </div>
+                                    <div class="progress-track">
+                                        <div id="bar-cpu" class="progress-fill" style="width: 0%"></div>
+                                    </div>
+                                </div>
+                                <div class="metric-card">
+                                    <div class="metric-header">
+                                        <span>RAM 점유량</span>
+                                        <span id="val-ram">0.0 / 0.0 GB</span>
+                                    </div>
+                                    <div class="progress-track">
+                                        <div id="bar-ram" class="progress-fill" style="width: 0%"></div>
+                                    </div>
+                                </div>
+                                <div class="metric-card">
+                                    <div class="metric-header">
+                                        <span>GPU 부하량</span>
+                                        <span id="val-gpu">0.0%</span>
+                                    </div>
+                                    <div class="progress-track">
+                                        <div id="bar-gpu" class="progress-fill accent" style="width: 0%"></div>
+                                    </div>
+                                </div>
+                                <div class="metric-card">
+                                    <div class="metric-header">
+                                        <span>VRAM 점유량</span>
+                                        <span id="val-vram">0 / 0 MB</span>
+                                    </div>
+                                    <div class="progress-track">
+                                        <div id="bar-vram" class="progress-fill accent" style="width: 0%"></div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); margin-bottom: 6px; font-weight: 600;">
+                                <span>실시간 CPU/GPU 모니터 (최근 50s 이력)</span>
+                                <span id="val-power-temp">전력: 0.0W  |  온도: 0°C</span>
+                            </div>
+                            <canvas id="telemetry-canvas" height="80"></canvas>
+                        </div>
+
+                        <!-- Log & Outputs -->
+                        <div class="log-panel">
+                            <div class="log-tabs">
+                                <button id="log-tab-sys" class="log-tab active" onclick="switchLogTab('sys')">커널 텔레메트리 로그</button>
+                                <button id="log-tab-bench" class="log-tab" onclick="switchLogTab('bench')">벤치마크 진행 로그</button>
+                                <button id="log-tab-stream" class="log-tab" onclick="switchLogTab('stream')">실시간 추론 스트리밍</button>
+                            </div>
+                            <div id="log-viewport-sys" class="log-viewport log-sys"></div>
+                            <div id="log-viewport-bench" class="log-viewport log-bench" style="display: none;"></div>
+                            <div id="log-viewport-stream" class="log-viewport log-sys" style="display: none; font-size: 12px; line-height: 1.5; color: #a5f3fc; background-color: #020617;"></div>
+                        </div>
+                    </div>
+
+                    <!-- Right Column: Interactive Chat -->
+                    <div class="panel col-right">
+                        <div class="chat-container">
+                            <div class="sub-panel" style="margin-bottom: 8px; padding: 10px;">
+                                <h3 style="margin-bottom: 4px; border-bottom: none;">💬 대화형 벤치마크 모드</h3>
+                                <span style="font-size: 11px; color: var(--text-muted);">
+                                    프롬프트를 전송하면 실시간으로 추론하며 채점을 동시에 수행합니다.
+                                </span>
+                            </div>
+                            <div id="chat-messages" class="chat-messages">
+                                <div class="chat-bubble system">대화형 추론 벤치마크 채널이 개설되었습니다.</div>
+                            </div>
+                            <div class="chat-input-row">
+                                <input type="text" id="chat-input" placeholder="질문을 입력하세요..." onkeydown="if(event.key==='Enter') sendChatMessage()">
+                                <button class="btn btn-primary" onclick="sendChatMessage()">전송</button>
+                            </div>
+                        </div>
+                    </div>
+                    
                 </div>
-
-                <!-- Middle Column: Telemetry & Logs -->
-                <div class="panel col-mid">
-                    <!-- Resource Telemetry -->
-                    <div class="sub-panel">
-                        <h3>3. 실시간 디바이스 텔레메트리 (1s 주기)</h3>
-                        <div class="telemetry-grid">
-                            <div class="metric-card">
-                                <div class="metric-header">
-                                    <span>CPU 부하량</span>
-                                    <span id="val-cpu">0.0%</span>
-                                </div>
-                                <div class="progress-track">
-                                    <div id="bar-cpu" class="progress-fill" style="width: 0%"></div>
-                                </div>
-                            </div>
-                            <div class="metric-card">
-                                <div class="metric-header">
-                                    <span>RAM 점유량</span>
-                                    <span id="val-ram">0.0 / 0.0 GB</span>
-                                </div>
-                                <div class="progress-track">
-                                    <div id="bar-ram" class="progress-fill" style="width: 0%"></div>
-                                </div>
-                            </div>
-                            <div class="metric-card">
-                                <div class="metric-header">
-                                    <span>GPU 부하량</span>
-                                    <span id="val-gpu">0.0%</span>
-                                </div>
-                                <div class="progress-track">
-                                    <div id="bar-gpu" class="progress-fill accent" style="width: 0%"></div>
-                                </div>
-                            </div>
-                            <div class="metric-card">
-                                <div class="metric-header">
-                                    <span>VRAM 점유량</span>
-                                    <span id="val-vram">0 / 0 MB</span>
-                                </div>
-                                <div class="progress-track">
-                                    <div id="bar-vram" class="progress-fill accent" style="width: 0%"></div>
-                                </div>
-                            </div>
-                        </div>
-                        <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); margin-bottom: 6px; font-weight: 600;">
-                            <span>실시간 CPU/GPU 모니터 (최근 50s 이력)</span>
-                            <span id="val-power-temp">전력: 0.0W  |  온도: 0°C</span>
-                        </div>
-                        <canvas id="telemetry-canvas" height="80"></canvas>
-                    </div>
-
-                    <!-- Log & Outputs -->
-                    <div class="log-panel">
-                        <div class="log-tabs">
-                            <button id="log-tab-sys" class="log-tab active" onclick="switchLogTab('sys')">커널 텔레메트리 로그</button>
-                            <button id="log-tab-bench" class="log-tab" onclick="switchLogTab('bench')">벤치마크 진행 로그</button>
-                            <button id="log-tab-stream" class="log-tab" onclick="switchLogTab('stream')">실시간 추론 스트리밍</button>
-                        </div>
-                        <div id="log-viewport-sys" class="log-viewport log-sys"></div>
-                        <div id="log-viewport-bench" class="log-viewport log-bench" style="display: none;"></div>
-                        <div id="log-viewport-stream" class="log-viewport log-sys" style="display: none; font-size: 12px; line-height: 1.5; color: #a5f3fc; background-color: #020617;"></div>
-                    </div>
-                </div>
-
-                <!-- Right Column: Interactive Chat -->
-                <div class="panel col-right">
-                    <div class="chat-container">
-                        <div class="sub-panel" style="margin-bottom: 8px; padding: 10px;">
-                            <h3 style="margin-bottom: 4px; border-bottom: none;">💬 대화형 벤치마크 모드</h3>
-                            <span style="font-size: 11px; color: var(--text-muted);">
-                                프롬프트를 전송하면 실시간으로 추론하며 채점을 동시에 수행합니다.
-                            </span>
-                        </div>
-                        <div id="chat-messages" class="chat-messages">
-                            <div class="chat-bubble system">대화형 추론 벤치마크 채널이 개설되었습니다.</div>
-                        </div>
-                        <div class="chat-input-row">
-                            <input type="text" id="chat-input" placeholder="질문을 입력하세요..." onkeydown="if(event.key==='Enter') sendChatMessage()">
-                            <button class="btn btn-primary" onclick="sendChatMessage()">전송</button>
-                        </div>
-                    </div>
-                </div>
-
             </div>
 
             <!-- TAB: Reports History -->
             <div id="tab-reports" class="tab-pane">
                 <div class="panel" style="width: 100%; height: 100%;">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-                        <h2 style="font-size: 16px; font-weight: 800;">📊 최근 벤치마크 리포트 이력 (Edge_v5_Singularity_Report.csv)</h2>
-                        <button class="btn" onclick="loadReports()">새로고침</button>
+                        <h2 style="font-size: 16px; font-weight: 800;">📊 벤치마크 리포트 이력 (SQLite DB)</h2>
+                        <div style="display: flex; gap: 8px; align-items: center;">
+                            <label style="font-size:12px; color:var(--text-secondary); display:flex; align-items:center; gap:4px; margin-right:10px;">
+                                <input type="checkbox" id="report-llm-summary" checked> Word 출력 시 AI 분석 요약 포함
+                            </label>
+                            <button class="btn btn-primary" onclick="exportFullExcel()">전체 Excel 다운로드</button>
+                            <button class="btn" onclick="loadReports()">새로고침</button>
+                        </div>
                     </div>
                     <div class="reports-container">
                         <table>
@@ -214,18 +292,19 @@
                                 <tr>
                                     <th>시간</th>
                                     <th>모델명</th>
-                                    <th>카테고리</th>
-                                    <th>TTFT</th>
-                                    <th>TPS</th>
-                                    <th>전력(W)</th>
-                                    <th>전성비(t/J)</th>
-                                    <th>점수</th>
-                                    <th>의견</th>
+                                    <th>엔진</th>
+                                    <th>모드</th>
+                                    <th>태스크수</th>
+                                    <th>평균 TTFT</th>
+                                    <th>평균 TPS</th>
+                                    <th>평균 전력</th>
+                                    <th>평균 점수</th>
+                                    <th style="text-align: center; width: 220px;">내보내기 / 관리</th>
                                 </tr>
                             </thead>
                             <tbody id="reports-table-body">
                                 <tr>
-                                    <td colspan="9" style="text-align: center; color: var(--text-muted);">데이터가 없습니다.</td>
+                                    <td colspan="10" style="text-align: center; color: var(--text-muted);">데이터가 없습니다.</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -242,7 +321,7 @@
                 <span id="status-text">커널 연결 대기 중...</span>
             </div>
             <div>
-                <span>Docker Engine: v5.6 Isolated Arena</span>
+                <span>Docker Engine: v5.6 SQLite Structured Database</span>
             </div>
         </footer>
     </div>
@@ -275,11 +354,11 @@
                     <table>
                         <thead>
                             <tr>
-                                <th style="width: 15%;">TASK ID</th>
-                                <th style="width: 50%;">PROMPT</th>
-                                <th style="width: 20%;">REGEX 패턴</th>
-                                <th style="width: 15%;">평가 방식</th>
-                                <th style="width: 10%;">관리</th>
+                                <th style="width: 20%;">TASK ID</th>
+                                <th style="width: 45%;">PROMPT</th>
+                                <th style="width: 15%;">REGEX 패턴</th>
+                                <th style="width: 12%;">평가 방식</th>
+                                <th style="width: 8%; text-align: center;">삭제</th>
                             </tr>
                         </thead>
                         <tbody id="harness-table-body">
@@ -294,13 +373,13 @@
                     <div class="form-row">
                         <div class="form-group" style="flex: 2;">
                             <label for="new-task-id">TASK ID</label>
-                            <input type="text" id="new-task-id" placeholder="예: K-Logic">
+                            <input type="text" id="new-task-id" placeholder="예: K-Logic-01">
                         </div>
                         <div class="form-group" style="flex: 1;">
                             <label for="new-task-eval">평가 방식</label>
                             <select id="new-task-eval" onchange="onNewTaskEvalChange()">
-                                <option value="llm_judge">llm_judge (인공지능 판정)</option>
-                                <option value="regex">regex (정규식 매칭)</option>
+                                <option value="llm_judge">llm_judge (AI 판정)</option>
+                                <option value="regex">regex (정규식 검증)</option>
                             </select>
                         </div>
                     </div>
@@ -317,7 +396,107 @@
             </div>
             <div class="modal-footer">
                 <button class="btn" onclick="closeModal('harness')">취소</button>
-                <button class="btn btn-accent" onclick="commitHarness()">💾 COMMIT TO CSV</button>
+                <button class="btn btn-accent" onclick="commitHarness()">💾 COMMIT TO DB</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: Global Settings -->
+    <div id="modal-settings" class="modal-overlay">
+        <div class="modal" style="max-width: 500px;">
+            <div class="modal-header">
+                <h2>⚙️ 환경 설정 (config.json)</h2>
+                <button class="btn" style="padding: 4px 8px;" onclick="closeModal('settings')">✖</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="set-vault-dir">GGUF 모델 보관 폴더 (llm)</label>
+                    <input type="text" id="set-vault-dir" value="c:/ameva/models/llm">
+                </div>
+                <div class="form-group">
+                    <label for="set-bitnet-dir">BitNet 모델 보관 폴더 (bitnet)</label>
+                    <input type="text" id="set-bitnet-dir" value="c:/ameva/models/bitnet">
+                </div>
+                <div class="form-group">
+                    <label for="set-judge-model">기본 판정관 모델 명칭</label>
+                    <input type="text" id="set-judge-model" value="exaone3.5:7.8b">
+                </div>
+                <div style="font-size:11px; color:var(--text-muted); margin-top:10px;">
+                    설정 값은 config.json에 영구 저장되며, 모델 경로 변경 시 다운로드 시점에 해당 폴더가 사용됩니다.
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" onclick="closeModal('settings')">취소</button>
+                <button class="btn btn-primary" onclick="saveGlobalSettings()">설정 저장</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: Report Detail View -->
+    <div id="modal-report-detail" class="modal-overlay">
+        <div class="modal" style="max-width: 880px; max-height: 80vh;">
+            <div class="modal-header">
+                <h2 id="detail-modal-title">📊 벤치마크 상세 보고서</h2>
+                <button class="btn" style="padding: 4px 8px;" onclick="closeModal('report-detail')">✖</button>
+            </div>
+            <div class="modal-body" style="padding: 16px; display:flex; flex-direction:column; gap:16px;">
+                <!-- 메타 요약 정보 -->
+                <div class="sub-panel" style="margin-bottom:0;">
+                    <div id="detail-run-meta" style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; font-size:12px; color:var(--text-secondary);">
+                        <!-- 동적 주입 -->
+                    </div>
+                </div>
+                <!-- 태스크별 결과 리스트 -->
+                <div style="flex: 1; overflow-y:auto; border: 1px solid var(--border-color); border-radius:6px;">
+                    <table style="width: 100%;">
+                        <thead>
+                            <tr>
+                                <th>태스크명</th>
+                                <th>카테고리</th>
+                                <th>TTFT</th>
+                                <th>TPS</th>
+                                <th>평균전력</th>
+                                <th>점수</th>
+                                <th>자세히</th>
+                            </tr>
+                        </thead>
+                        <tbody id="detail-results-tbody">
+                            <!-- 동적 주입 -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-accent" id="detail-btn-word" onclick="">DOCX 보고서 생성</button>
+                <button class="btn btn-primary" id="detail-btn-excel" onclick="">Excel 생성</button>
+                <button class="btn" onclick="closeModal('report-detail')">닫기</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: Task Detail View (Accordion Fallback) -->
+    <div id="modal-task-detail" class="modal-overlay" style="z-index: 1100;">
+        <div class="modal" style="max-width: 650px; background-color: var(--surface-light);">
+            <div class="modal-header" style="border-bottom-color: var(--border-color);">
+                <h2 id="task-detail-title">태스크 답변 상세</h2>
+                <button class="btn" style="padding: 4px 8px;" onclick="closeModal('task-detail')">✖</button>
+            </div>
+            <div class="modal-body" style="font-size:12px; display:flex; flex-direction:column; gap:12px;">
+                <div>
+                    <label style="font-weight:700; color:var(--text-secondary);">질문(Prompt)</label>
+                    <div id="task-detail-prompt" style="background:var(--surface-color); padding:10px; border-radius:6px; border:1px solid var(--border-color); white-space:pre-wrap; margin-top:4px;"></div>
+                </div>
+                <div>
+                    <label style="font-weight:700; color:var(--text-secondary);">답변(Response)</label>
+                    <div id="task-detail-response" style="background:#020617; color:#a5f3fc; padding:10px; border-radius:6px; border:1px solid var(--border-color); white-space:pre-wrap; font-family:monospace; margin-top:4px; max-height:220px; overflow-y:auto;"></div>
+                </div>
+                <div>
+                    <label style="font-weight:700; color:var(--text-secondary);">판정 의견(Rationale)</label>
+                    <div id="task-detail-reason" style="background:var(--surface-color); padding:10px; border-radius:6px; border:1px solid var(--border-color); white-space:pre-wrap; margin-top:4px;"></div>
+                </div>
+            </div>
+            <div class="modal-footer" style="border-top-color: var(--border-color);">
+                <button class="btn" onclick="closeModal('task-detail')">닫기</button>
             </div>
         </div>
     </div>
