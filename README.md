@@ -23,7 +23,7 @@
 
 ## 3. 개요 (Abstract)
 
-본 프로젝트는 엣지 디바이스 환경에서의 파편화된 리소스 제약 조건을 극복하고, 모델별 실질 성능을 공정하고 독립적으로 계측 및 검증하기 위한 컨테이너 격리식 벤치마킹 플랫폼입니다. 호스트 OS 간섭으로 인한 지표 왜곡 문제를 물리적으로 해결하기 위해 컨테이너 기반 샌드박스 런타임을 제공하며, 단순 추론 속도를 넘어 전력 효율($\text{Tokens/J}$)과 지식 정합성을 통합 계측합니다.
+본 프로젝트는 엣지 디바이스 환경에서의 파편화된 리소스 제약 조건을 극복하고, 모델별 실질 성능을 공정하고 독립적으로 계측 및 검증하기 위한 컨테이너 격리식 벤치마킹 플랫폼입니다. 호스트 OS 간섭으로 인한 지표 왜곡 문제를 물리적으로 해결하기 위해 컨테이너 기반 샌드박스 런타임을 제공하며, 단순 추론 속도를 넘어 전력 효율({Tokens/J})과 지식 정합성을 통합 계측합니다.
 
 멀티플랫폼 지원 및 자동 OS 셋업 환경 진단 스크립트([run.ps1](file:///c:/Users/ATSAdmin/Documents/UNO/small_prj/AMEVA-Benchmark-Suite/run.ps1), [launch.bat](file:///c:/Users/ATSAdmin/Documents/UNO/small_prj/AMEVA-Benchmark-Suite/launch.bat)), SQLite 기반의 관계형 데이터 감사 스키마 설계 및 검증 가드, 그리고 GGUF 양자화 추론 엔진과의 오케스트레이션 연동을 통해 MLOps 환경에서 최상의 문서 투명성과 엔지니어링 완성도를 보장합니다.
 
@@ -250,7 +250,7 @@ AMEVA-Benchmark-Suite/
   > AI 판정관의 평가 근거(Rationale)는 추론 데이터와 함께 `benchmark_results` 테이블의 `judge_reason` 컬럼에 자동 적재되어 설명성을 확보합니다.
 
 - **영구 보존 아티팩트**:
-  - `ameva_benchmark.db`: 전체 실행 세션 및 태스크별 ttft, tps, peak_vram, 전력 소모량($\text{Tokens/Joule}$), 판정관 평가 점수와 근거 데이터 영구 관리.
+  - `ameva_benchmark.db`: 전체 실행 세션 및 태스크별 ttft, tps, peak_vram, 전력 소모량({Tokens/Joule}), 판정관 평가 점수와 근거 데이터 영구 관리.
   - `Word (.docx) Report`: [benchmark.py](file:///c:/Users/ATSAdmin/Documents/UNO/small_prj/AMEVA-Benchmark-Suite/src/backend/routers/benchmark.py)에 기재된 고급 비즈니스 테마 색상(Deep Indigo, Soft Charcoal)을 반영한 공식 기술 진단 보고서 다운로드 기능 제공.
   - `Excel (.xlsx) Export`: 로 데이터(Raw Data) 계측치를 데이터 분석 용도로 내보낼 수 있도록 포맷팅된 엑셀 보고서 생성.
 
@@ -262,7 +262,7 @@ AMEVA-Benchmark-Suite/
   본 프로젝트는 파편화된 설치 환경을 하나로 묶기 위해 [run.ps1](file:///c:/Users/ATSAdmin/Documents/UNO/small_prj/AMEVA-Benchmark-Suite/run.ps1)과 [launch.bat](file:///c:/Users/ATSAdmin/Documents/UNO/small_prj/AMEVA-Benchmark-Suite/launch.bat)을 통한 원클릭 인프라 구성을 지원합니다.
   1. **호스트 데몬 진단**: 로컬 포트 11434를 확인하여 Ollama 데몬을 가동하고, `docker info` 진단을 통하여 Docker Desktop이 미작동 중일 시 활성화를 대기합니다.
   2. **바이너리 격리 및 GGUF 취득**: Hugging Face 허브로부터 `qwen2.5-1.5b-instruct-q4_k_m.gguf` 및 `Llama-3.2-1B-Instruct-Q4_K_M.gguf`를 `c:\ameva\models\llm` 경로에 로컬 자동 캐싱하여 외부 바이너리 라이브러리 간섭 없이 독립 격리시킵니다.
-  3. **가상환경 가동**: 파이썬 샌드박스를 구축하고 `requirements.txt` 의존성을 확인한 후, 최적화 환경변수($\text{PYTHONUNBUFFERED}=1$) 및 전역 포트 매핑을 동적으로 획득하여 런처를 격리 실행합니다.
+  3. **가상환경 가동**: 파이썬 샌드박스를 구축하고 `requirements.txt` 의존성을 확인한 후, 최적화 환경변수({PYTHONUNBUFFERED}=1) 및 전역 포트 매핑을 동적으로 획득하여 런처를 격리 실행합니다.
 
 - **단계별 상세 커맨드**:
 
@@ -280,15 +280,19 @@ AMEVA-Benchmark-Suite/
 ## 8. 실험 로드맵 및 검증 전략 (Experimental Roadmap)
 
 - **실험 설계 원칙**:
-  동일한 리소스(RAM $4096\text{MB}$, CPU $2\text{ Cores}$) 제약조건을 컨테이너에 완벽히 격리 고정한 후, 상이한 양자화 모델들($1.5\text{B}$ vs $1\text{B}$ vs Distilled 모델들)을 대상으로 동일 질문 하네스 세트를 투입합니다. 이를 통해 목적 함수인 $TPS$, $TTFT$, 그리고 판정관 $Quality Score$의 변화 추이를 정밀 비교 분석합니다.
+  동일한 리소스(RAM $4096\text{MB}$, CPU $2\text{ Cores}$) 제약조건을 컨테이너에 완벽히 격리 고정한 후, 상이한 양자화 모델들($1.5\text{B}$ vs $1\text{B}$ vs Distilled 모델들)을 대상으로 동일 질문 하네스 세트를 투입합니다. 이를 통해 목적 함수인 TPS, TTFT, 그리고 판정관 Quality Score의 변화 추이를 정밀 비교 분석합니다.
   
-  추론 지연 시간(End-to-End Latency) $L_{e2e}$ 및 에너지 효율(Energy Efficiency) $\eta$는 다음과 같은 수학 모델을 기준으로 계측됩니다:
+  추론 지연 시간(End-to-End Latency) L_e2e 및 에너지 효율(Energy Efficiency) η는 다음과 같은 수학 모델을 기준으로 계측됩니다:
   
-  $$L_{e2e} = TTFT + \frac{N}{TPS}$$
   
-  $$\eta = \frac{T}{E}$$
+* L_e2e = TTFT + (N / TPS)
+
   
-  (여기서 $TTFT$는 첫 번째 토큰이 출력될 때까지의 지연 시간, $N$은 생성된 토큰 수, $TPS$는 초당 토큰 생성 수, $T$는 총 토큰 생성 개수, $E$는 GPU/CPU의 에너지 소모량(Joule)을 나타냅니다.)
+  
+* η = T / E
+
+  
+  (여기서 TTFT는 첫 번째 토큰이 출력될 때까지의 지연 시간, N은 생성된 토큰 수, TPS는 초당 토큰 생성 수, T는 총 토큰 생성 개수, E는 GPU/CPU의 에너지 소모량(Joule)을 나타냅니다.)
 
 - **실험 진행 상황 (Tracker)**:
 
