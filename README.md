@@ -143,7 +143,7 @@
                 
             os.makedirs(models_dir, exist_ok=True)
             volumes = {models_dir: {'bind': INTERNAL_VAULT_PATH, 'mode': 'rw'}}
-            self._log(f"· 볼륨 마운트 준비: {models_dir}  {INTERNAL_VAULT_PATH}")
+            self._log(f"· 볼륨 마운트 준비: {models_dir} → {INTERNAL_VAULT_PATH}")
 ```
 
 ---
