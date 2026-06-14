@@ -1,3 +1,5 @@
+#  AMEVA Benchmark Suite: Container-Based High-Performance LLM Evaluation Platform
+
 > **[프로젝트 요약 (Resume Profile)]**
 > 
 > * **① 제목:** 컨테이너 격리식 고성능 LLM 벤치마킹 플랫폼 (AMEVA Benchmark Suite)
@@ -13,26 +15,33 @@
 >   * **연구 성과:** 벤치마크 전환 간 가비지 VRAM의 물리적 소거를 통해 지표 계측의 100% 재현 가능한 결정성(Determinism)을 확보하고, 순차 언로드 스택 구축으로 16GB 이하 저사양 엣지 환경에서 OOM으로 인한 프로세스 크래시 차단
 > * **④ 기여도:** 단독 개발 (100% - 아키텍처 설계, 보안 시스템 구축, 코어 로직 구현 전담)
 
-# 📊 AMEVA Benchmark Suite: Container-Based High-Performance LLM Evaluation Platform
+#  AMEVA Benchmark Suite: Container-Based High-Performance LLM Evaluation Platform
 
-## 1. 개요 (Abstract)
+---
+
+---
+
+## 3. 개요 (Abstract)
+
 본 프로젝트는 엣지 디바이스 환경에서의 파편화된 리소스 제약 조건을 극복하고, 모델별 실질 성능을 공정하고 독립적으로 계측 및 검증하기 위한 컨테이너 격리식 벤치마킹 플랫폼입니다. 호스트 OS 간섭으로 인한 지표 왜곡 문제를 물리적으로 해결하기 위해 컨테이너 기반 샌드박스 런타임을 제공하며, 단순 추론 속도를 넘어 전력 효율($\text{Tokens/J}$)과 지식 정합성을 통합 계측합니다.
 
 멀티플랫폼 지원 및 자동 OS 셋업 환경 진단 스크립트([run.ps1](file:///c:/Users/ATSAdmin/Documents/UNO/small_prj/AMEVA-Benchmark-Suite/run.ps1), [launch.bat](file:///c:/Users/ATSAdmin/Documents/UNO/small_prj/AMEVA-Benchmark-Suite/launch.bat)), SQLite 기반의 관계형 데이터 감사 스키마 설계 및 검증 가드, 그리고 GGUF 양자화 추론 엔진과의 오케스트레이션 연동을 통해 MLOps 환경에서 최상의 문서 투명성과 엔지니어링 완성도를 보장합니다.
 
 ---
 
-## 2. 주요 기술적 특징 (Technical Deep-Dive)
+## 4. 주요 기술적 특징 (Technical Deep-Dive)
 
 ### 2.1. 데이터 획득 및 전처리 알고리즘 (Data Engineering)
 - **하네스 태스크 및 정규식 정합성 판정**: `harness_tasks` 데이터베이스 테이블에 사전에 등록된 검증용 프롬프트를 로드하여 추론을 실행합니다. 생성된 응답에 대한 정량 검증을 수행하기 위해 `expected_regex` 컬럼에 정의된 정규 표현식을 사용해 수학적 기호나 특정 단어, 최종 계산 결과를 추출 및 정규화하여 성공/실패 여부를 자동 판정합니다.
 - **메모리 최적화 스트리밍 및 로깅**: 비동기 백엔드와 프론트엔드가 WebSocket 프로토콜로 실시간 소통을 진행합니다. [logs.py](file:///c:/Users/ATSAdmin/Documents/UNO/small_prj/AMEVA-Benchmark-Suite/src/backend/routers/logs.py)에서 정의된 `broadcaster`는 메모리 누수를 방지하기 위해 최대 500라인의 최근 로그를 고정 크기 원형 큐(Log History Buffer)로 관리하며, 실시간 추론 스트림과 평가 결과 로그를 비동기 이벤트 루프 기반으로 중계합니다.
 
 ### 2.2. 모델 아키텍처 및 학습 전략 (Fine-Tuning Methodology)
+
 - **로컬 벤치마크 및 AI 판정관 (Judge Service)**: 벤치마킹 대상 모델의 추론 결과를 정성적으로 평가하기 위해 로컬 LLM(EXAONE 3.5:7.8B 등)을 판정관(Judge)으로 구동합니다.
 - **자원 경합 방지를 위한 Unloading 가드**: 벤치마킹 대상 모델과 판정관 모델이 VRAM을 동시에 점유하여 OOM(Out Of Memory)을 유발하는 문제를 차단하기 위해, 추론 파이프라인에서 벤치마크 엔진 컨테이너의 가중치를 완전히 언로드(Unload)한 후 판정관 모델을 순차적으로 기동하는 자원 격리 라이프사이클 관리 모델을 취하고 있습니다.
 
 ### 2.3. 양자화 및 배포 최적화 (Inference Optimization)
+
 - **GGUF 양자화 모델 실행**: 다양한 하드웨어 가용성(VRAM 크기, CPU 명령어 세트 등)에 따라 Q4_K_M 등 가중치 양자화 등급을 가동하여 엣지 디바이스에서의 고속 연산을 극대화합니다.
 - **Smart SWAP 격리 아레나**: 벤치마크 대상 모델 변경 시 VRAM/RAM 내 잔여 가비지 메모리를 물리적으로 소멸시키기 위하여 추론 엔진 컨테이너를 완전히 파괴하고 재기동(Reboot)함으로써, 매 벤치마크 평가 시 결정적이고(Deterministic) 재현 가능한 클린 스테이트(Clean State)를 유지합니다.
 
@@ -70,12 +79,12 @@
                 
                 # 정규화된 이름으로 체크 (예: exaone3.5:7.8b)
                 if judge_model not in model_names and (judge_model + ":latest") not in model_names:
-                    msg = f"⚠ 판정관 모델('{judge_model}')이 Ollama에 없습니다. 먼저 모델을 Pull 해주세요."
+                    msg = f" 판정관 모델('{judge_model}')이 Ollama에 없습니다. 먼저 모델을 Pull 해주세요."
                     if chunk_callback: chunk_callback(f"\n{msg}")
                     return {"score": 0, "reason": msg}
 
                 if chunk_callback:
-                    chunk_callback(f"\n\n--- 🧠 Local Judge Thought ({judge_model}) ---\n")
+                    chunk_callback(f"\n\n---  Local Judge Thought ({judge_model}) ---\n")
                 
                 messages = [
                     {"role": "system", "content": system_prompt},
@@ -104,6 +113,7 @@
 ```
 
 #### 2.4.2. Docker 격리 런타임 수명 주기 제어 (Matrix Engine)
+
 * **물리적 소스코드 주소**: [matrix_engine.py:L59-L96](file:///c:/Users/ATSAdmin/Documents/UNO/small_prj/AMEVA-Benchmark-Suite/src/core/matrix_engine.py#L59-L96)
 ```python
     def boot_matrix(self, config: Dict) -> Tuple[bool, str]:
@@ -117,7 +127,7 @@
         try:
             self._log("Docker 클라이언트 초기화 중...")
             client = self._get_docker_client()
-            self._log("✓ Docker 데몬 연결 성공")
+            self._log(" Docker 데몬 연결 성공")
 
             # Cleanup
             self._log("이전 아레나 인스턴스 정리 중...")
@@ -133,12 +143,12 @@
                 
             os.makedirs(models_dir, exist_ok=True)
             volumes = {models_dir: {'bind': INTERNAL_VAULT_PATH, 'mode': 'rw'}}
-            self._log(f"· 볼륨 마운트 준비: {models_dir} → {INTERNAL_VAULT_PATH}")
+            self._log(f"· 볼륨 마운트 준비: {models_dir}  {INTERNAL_VAULT_PATH}")
 ```
 
 ---
 
-## 3. 시스템 아키텍처 설계 (Software Architecture Design)
+## 5. 시스템 아키텍처 설계 (Software Architecture Design)
 
 ### 3.1. 레이어별 다이어그램 (Mermaid)
 
@@ -181,12 +191,14 @@ graph TD
 > Mermaid 파싱 에러를 방지하기 위해 괄호`()`나 대시`-`가 들어간 subgraph 타이틀은 반드시 큰따옴표(`""`)로 묶어 정의하십시오. (예: `subgraph "Client Layer (Premium CLI)"`)
 
 ### 3.2. 모듈별 설계 의도
+
 - **View Layer (PyWebview & JS)**: 사용자 조작 도중 무반응 상태가 되는 프리징 현상을 방지하고 비차단 비동기 UI를 제공합니다. 사용자의 스크롤 위치를 인지하여 실시간 스트리밍 시 스크롤을 유지해 주는 스크롤 가드, 드래그 및 최대화가 가능한 독립 윈도우 팝업 로그창, 그리고 Ctrl+F 검색 시스템이 장착되어 있습니다.
 - **API Layer (FastAPI)**: API 엔드포인트들을 물리적으로 완전히 격리하여 웹과 백엔드 비즈니스 로직을 분리(Decoupling)하고, REST API 및 WebSocket 통신을 병행 운영합니다.
 - **Engine Layer (Docker / Ollama Client)**: 측정 환경의 물리적 격리를 지원하는 Docker Core와 판정 처리를 담당하는 Judge Core로 구성됩니다.
 - **Persistence Layer (SQLite / File-based Reports)**: 계측 결과 및 하네스 정보를 관리하는 `ameva_benchmark.db` SQLite 인프라와 외부 보고용 Word(.docx) 및 Excel 생성기를 포함합니다.
 
 ### 3.3. 디렉토리 구조 (Repository Layout)
+
 ```text
 AMEVA-Benchmark-Suite/
 ├── ameva_benchmark.db        # SQLite3 데이터베이스 (하네스 태스크 및 과거 측정 이력 보존)
@@ -216,7 +228,7 @@ AMEVA-Benchmark-Suite/
 
 ---
 
-## 4. 데이터 무결성 및 설명성 검수 체계 (Data Integrity & Quality Audit)
+## 6. 데이터 무결성 및 설명성 검수 체계 (Data Integrity & Quality Audit)
 
 - **무결성 프로토콜**:
   - **SQLite Database Integrity Guard**: 데이터베이스 수준에서 외래키 제약조건(`PRAGMA foreign_keys = ON;`)을 상시 활성화하여 관계 무결성을 완벽하게 유지합니다.
@@ -244,7 +256,7 @@ AMEVA-Benchmark-Suite/
 
 ---
 
-## 5. 설치 및 파이프라인 가이드 (Execution Pipeline)
+## 7. 설치 및 파이프라인 가이드 (Execution Pipeline)
 
 - **인프라 구축 전략**:
   본 프로젝트는 파편화된 설치 환경을 하나로 묶기 위해 [run.ps1](file:///c:/Users/ATSAdmin/Documents/UNO/small_prj/AMEVA-Benchmark-Suite/run.ps1)과 [launch.bat](file:///c:/Users/ATSAdmin/Documents/UNO/small_prj/AMEVA-Benchmark-Suite/launch.bat)을 통한 원클릭 인프라 구성을 지원합니다.
@@ -265,7 +277,7 @@ AMEVA-Benchmark-Suite/
 
 ---
 
-## 6. 실험 로드맵 및 검증 전략 (Experimental Roadmap)
+## 8. 실험 로드맵 및 검증 전략 (Experimental Roadmap)
 
 - **실험 설계 원칙**:
   동일한 리소스(RAM $4096\text{MB}$, CPU $2\text{ Cores}$) 제약조건을 컨테이너에 완벽히 격리 고정한 후, 상이한 양자화 모델들($1.5\text{B}$ vs $1\text{B}$ vs Distilled 모델들)을 대상으로 동일 질문 하네스 세트를 투입합니다. 이를 통해 목적 함수인 $TPS$, $TTFT$, 그리고 판정관 $Quality Score$의 변화 추이를 정밀 비교 분석합니다.
@@ -293,7 +305,7 @@ AMEVA-Benchmark-Suite/
 
 ---
 
-## 7. 아키텍처 설계 철학 및 트레이드오프 (Architecture Philosophy)
+## 9. 아키텍처 설계 철학 및 트레이드오프 (Architecture Philosophy)
 
 - **4대 운영 철학**:
   1. **로컬라이징 (Localizing)**: 민감한 성능 지표 유출을 완벽히 격리 차단하기 위해 외부 클라우드 의존성 없이 로컬 환경 내에서 전 구간을 가동합니다.
@@ -317,7 +329,8 @@ AMEVA-Benchmark-Suite/
 
 ---
 
-## 8. 👨‍💻 Tech Stack
+## 10. ‍ Tech Stack
+
 - **UI Architecture**: Vanilla HTML5, TailwindCSS, Vanilla Javascript (ES6+, WebSocket Client)
 - **Infrastructure**: Docker Engine SDK (Resource Isolation Cgroup v2), PowerShell Core Core Runtime, Windows Batch Installer
 - **Inference**: Ollama Engine API, llama.cpp GGUF Engine
@@ -331,3 +344,19 @@ AMEVA-Benchmark-Suite/
 
 ---
 > **"데이터가 장인정신을 만나면, 인공지능은 예술이 된다."** - AMEVA Project
+
+## 9. 연락처 (Contact)
+
+저는 Multi-Agent Systems, Edge Computing, 그리고 AI SRE 분야에 대한 학술적 담론을 언제나 환영합니다.
+
+- **GitHub**: [@uno-km](https://github.com/uno-km)
+- **Email**: zhfldk014745@naver.com
+- **Tstory**: [my-blog](https://uno-kim.tistory.com/)
+- **Research Focus**: Hierarchical AI Orchestration, Edge-native Inference, Data Sovereignty
+- **Generated by AMEVA Researcher Portfolio Builder**
+
+*Last Updated: June 9, 2026*
+
+---
+
+<sub>*빅테크의 클라우드 종속을 거부하고, 온프레미스 자율 지능의 독립과 생존을 실증합니다.*</sub>
