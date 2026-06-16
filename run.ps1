@@ -65,7 +65,13 @@ if ($LASTEXITCODE -ne 0) {
 
 # [3] 가상환경 및 의존성 검증 단계
 $EnvDir = ".\venv"
-if (-not (Test-Path -Path $EnvDir)) {
+$VenvValid = (Test-Path -Path "$EnvDir\Scripts\python.exe") -and (Test-Path -Path "$EnvDir\Scripts\Activate.ps1")
+
+if (-not $VenvValid) {
+    if (Test-Path -Path $EnvDir) {
+        Write-Host "Incomplete or corrupted virtual environment found. Recreating..." -ForegroundColor Yellow
+        Remove-Item -Path $EnvDir -Force -Recurse -ErrorAction SilentlyContinue
+    }
     Write-Host "Virtual environment (venv) not found. Creating virtual environment..." -ForegroundColor Yellow
     python -m venv $EnvDir
     if ($LASTEXITCODE -ne 0) {

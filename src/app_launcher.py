@@ -26,6 +26,10 @@ def run_backend(port):
 def main():
     port = find_free_port()
     
+    # 메인 포트(port)를 기준으로 도커 호스트 포트를 port + 1로 설정하여 충돌 방지 및 격리 강화
+    import core.constants as constants
+    constants.LLAMA_CPP_PORT = port + 1
+    
     # 1. 백엔드 스레드 가동
     backend_thread = threading.Thread(target=run_backend, args=(port,), daemon=True)
     backend_thread.start()
