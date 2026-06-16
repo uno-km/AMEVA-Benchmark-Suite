@@ -3,7 +3,7 @@
     "bit_vault_dir": "c:/ameva/models/bitnet",
     "default_judge_model": "exaone3.5:latest",
     "last_used_engine": "ENG",
-    "last_used_cores": 8.0,
-    "last_used_ram": 8192,
+    "last_used_cores": 2.0,
+    "last_used_ram": 2024,
     "last_used_gpu_layers": 0
 }

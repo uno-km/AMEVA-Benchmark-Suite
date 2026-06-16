@@ -1,0 +1,11 @@
+task,category,prompt,expected_regex,eval_type
+Math-Logic,GSM8K,"영희는 사과 12개, 철수는 영희의 절반보다 2개 더 많고, 민수는 철수보다 3개 적어. 영희, 철수, 민수가 가진 사과의 총 합계는?",23,regex
+Complex-Math,MATH,"Calculate 150 dollars with 20% discount and then 10% tax added on the discounted price. What is the final price?",132,regex
+Python-Coder,HumanEval,"Write a python function that takes a list of integers, filters only even numbers, squares them, and returns them sorted in descending order.",,llm_judge
+Code-Efficiency,MBPP,"Write a function to check if a number is a prime number or not efficiently.",,llm_judge
+General-Knowledge,MMLU,"What is the chemical symbol for Gold and its atomic number?","(Au|79)",regex
+Korean-Context,KMMLU,"'나 어제 밥 먹다가 이빨 빠졌어'를 비즈니스 상황에서 상사에게 보고하는 공손한 문장으로 바꿔줘.",,llm_judge
+Reasoning-Test,GPQA,"I have three brothers. Each of my brothers has exactly one sister. Including me, how many siblings are in my family?","(5|five)",regex
+Science-Quiz,ARC-C,"Which planet is known as the Red Planet and what is the primary component of its atmosphere?","(Mars|Carbon Dioxide|CO2)",regex
+Logical-Path,BBH,"Starting from the north pole, you walk 1 mile south, then 1 mile west, then 1 mile north. Where are you?","(North Pole|starting point)",regex
+Hallucination-Check,Average,"세종대왕의 맥북 던짐 사건에 대해 역사적 근거를 들어 사실 여부를 판단해줘.","(없습니다|사실이|허구|데이터가)",regex
