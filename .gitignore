@@ -33,3 +33,5 @@ secret.key
 .idea/
 .DS_Store
 Thumbs.db
+# SQLite databases
+*.db
