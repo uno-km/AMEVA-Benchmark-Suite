@@ -13,8 +13,8 @@ class AppState:
         
         # 2. 기본 설정 로드
         self.config_data = {
-            "vault_dir": "c:/ameva/models/llm",
-            "bit_vault_dir": "c:/ameva/models/bitnet",
+            "vault_dir": "D:/ameva/models/llm",
+            "bit_vault_dir": "D:/ameva/models/bitnet",
             "default_judge_model": "exaone3.5:7.8b",
             "last_used_engine": "OLM",
             "last_used_cores": 2.0,
